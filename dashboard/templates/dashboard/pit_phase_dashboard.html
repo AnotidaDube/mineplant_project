@@ -1,0 +1,118 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Pit Phase Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+    <h2 class="text-dark bg-light p-3 rounded mb-4">⛏️ Pit Phase Dashboard</h2>
+
+    <!-- KPI Panel -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card text-center shadow-sm">
+                <div class="card-body">
+                    <h5>Total Planned Tonnage</h5>
+                    <h3>{{ total_planned|floatformat:0 }} t</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center shadow-sm">
+                <div class="card-body">
+                    <h5>Total Actual Tonnage</h5>
+                    <h3>{{ total_actual|floatformat:0 }} t</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center shadow-sm">
+                <div class="card-body">
+                    <h5>Total Variance</h5>
+                    <h3 class="{{ 'text-success' if total_variance>=0 else 'text-danger' }}">
+                        {{ total_variance|floatformat:0 }} t
+                        {% if total_variance>=0 %}▲{% else %}▼{% endif %}
+                    </h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Phase Progress Chart -->
+    <canvas id="phaseTonnageChart" width="1000" height="400"></canvas>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const phaseNames = {{ phase_names|safe }};
+const plannedData = {{ planned_tonnage|safe }};
+const actualOreData = {{ actual_ore|safe }};
+const actualWasteData = {{ actual_waste|safe }};
+const varianceData = {{ variance_total|safe }};
+
+const ctx = document.getElementById('phaseTonnageChart').getContext('2d');
+new Chart(ctx, {
+    type: 'bar',
+    data: {
+        labels: phaseNames,
+        datasets: [
+            {
+                label: 'Planned Tonnage',
+                data: plannedData,
+                backgroundColor: 'rgba(100, 149, 237, 0.6)',
+                borderColor: '#4169E1',
+                borderWidth: 1
+            },
+            {
+                label: 'Actual Ore',
+                data: actualOreData,
+                backgroundColor: 'rgba(34, 139, 34, 0.7)',
+                borderColor: '#228B22',
+                borderWidth: 1
+            },
+            {
+                label: 'Actual Waste',
+                data: actualWasteData,
+                backgroundColor: 'rgba(255, 165, 0, 0.7)',
+                borderColor: '#FF8C00',
+                borderWidth: 1
+            },
+            {
+                label: 'Variance',
+                data: varianceData,
+                type: 'line',
+                fill: false,
+                borderColor: varianceData.map(v => v >= 0 ? '#FF0000' : '#1E90FF'),
+                borderWidth: 2,
+                tension: 0.2,
+                pointStyle: 'rectRot',
+                pointRadius: 5
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            tooltip: {
+                callbacks: {
+                    label: function(ctx) {
+                        if (ctx.dataset.label === 'Variance') {
+                            const v = ctx.raw;
+                            return `Variance: ${v} t (${v >= 0 ? 'Overbreak' : 'Underbreak'})`;
+                        }
+                        return ctx.dataset.label + ': ' + ctx.raw + ' t';
+                    }
+                }
+            },
+            legend: {
+                position: 'top'
+            }
+        },
+        scales: {
+            x: { stacked: true, title: { display: true, text: 'Pit Phases' }},
+            y: { stacked: false, beginAtZero: true, title: { display: true, text: 'Tonnage (t)' } }
+        }
+    }
+});
+</script>
+{% endblock %}

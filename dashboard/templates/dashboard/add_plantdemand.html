@@ -1,0 +1,58 @@
+{% extends "dashboard/base.html" %}
+{% load static %}
+{% block title %}Add Plant Demand{% endblock %}
+
+
+{% block content %}
+<style>
+    /* Background image */
+    body {
+        background: url("{% static 'dashboard/images/plant_Demand.webp' %}") no-repeat center center fixed;
+        background-size: cover;
+        color: #f7f7f7; /* Light text for visibility */
+    }
+
+    /* Slight dark overlay to reduce background contrast */
+    body::before {
+        content: "";
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.45);
+        z-index: -1;
+    }
+
+    /* Card enhanced visibility */
+    .card {
+        background: rgba(0,0,0,0.65); /* darker but transparent */
+        backdrop-filter: blur(4px); /* subtle luxury effect */
+        border-radius: 12px;
+        color: #ffffff; /* Bright text inside card */
+    }
+
+    label {
+        color: #ffffff !important;
+        font-weight: 600;
+    }
+
+    .card-header {
+        background: rgba(30, 30, 30, 0.85) !important;
+        border-bottom: 1px solid rgba(255,255,255,0.15);
+    }
+
+    a, h2, h4, p {
+        color: #ffffff !important;
+    }
+</style>
+<div class="container mt-4">
+    <h2>Add Plant Demand</h2>
+    <form method="POST">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit" class="btn btn-danger">Save</button>
+        <a href="{% url 'production-vs-demand' %}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}

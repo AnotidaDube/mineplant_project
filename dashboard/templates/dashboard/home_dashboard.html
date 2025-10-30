@@ -1,0 +1,111 @@
+{% extends 'dashboard/base.html' %}
+{% load static %}
+
+{% block title %}Welcome Dashboard{% endblock %}
+
+{% block content %}
+<style>
+    body {
+        background-color: #121826;
+        color: #e0e6ed;
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+    .welcome-header {
+        text-align: center;
+        margin-top: 60px;
+        margin-bottom: 50px;
+    }
+
+    .welcome-header h1 {
+        font-weight: 700;
+        color: #ffffff;
+        letter-spacing: 1px;
+    }
+
+    .welcome-header p {
+        color: #9da7b8;
+        font-size: 16px;
+        margin-top: 10px;
+    }
+
+    .dashboard-container {
+        display: flex;
+        justify-content: center;
+        gap: 50px;
+        flex-wrap: wrap;
+        padding: 30px 0;
+    }
+
+    .dashboard-card {
+        background-color: #1b2233;
+        border-radius: 20px;
+        padding: 40px;
+        text-align: center;
+        width: 340px;
+        transition: all 0.4s ease;
+        box-shadow: 0 0 20px rgba(0, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .dashboard-card:hover {
+        transform: translateY(-10px);
+        box-shadow: 0 0 25px rgba(0, 255, 255, 0.25);
+        border-color: rgba(0, 255, 255, 0.4);
+    }
+
+    .dashboard-card h3 {
+        color: #00e0ff;
+        font-weight: 600;
+    }
+
+    .dashboard-card p {
+        color: #b0bac9;
+        margin-top: 10px;
+        font-size: 15px;
+    }
+
+    .dashboard-btn {
+        margin-top: 25px;
+        background-color: #00e0ff;
+        border: none;
+        color: #000;
+        font-weight: 600;
+        border-radius: 8px;
+        padding: 10px 25px;
+        transition: all 0.3s ease;
+    }
+
+    .dashboard-btn:hover {
+        background-color: #00b3cc;
+        color: #fff;
+    }
+
+    footer {
+        margin-top: 80px;
+        text-align: center;
+        font-size: 14px;
+        color: #7a859c;
+    }
+</style>
+
+<div class="welcome-header">
+    <h1>Mine Monitoring System</h1>
+    <p>Select a dashboard below to begin monitoring and analysis.</p>
+</div>
+
+<div class="dashboard-container">
+    <div class="dashboard-card">
+        <h3>Mine–Plant Coordination Dashboard</h3>
+        <p>Monitor mine production, plant demand, ore quality, and stockpiles.</p>
+        <a href="{% url 'mine_plant_dashboard' %}" class="btn dashboard-btn">Open Dashboard</a>
+    </div>
+
+    <div class="dashboard-card">
+        <h3>Pit Phase Progress Dashboard</h3>
+        <p>Track pit development, tonnage movement, and progress across phases.</p>
+        <a href="{% url 'pit_phase_dashboard' %}" class="btn dashboard-btn">Open Dashboard</a>
+    </div>
+</div>
+
+{% endblock %}

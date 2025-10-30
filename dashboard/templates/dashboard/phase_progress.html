@@ -1,0 +1,197 @@
+{% extends "dashboard/base.html" %}
+{% load static %}
+{% load custom_tags %}
+
+{% block title %}Pit Phase Progress Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+    <!-- Header with Action Button -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="text-light bg-dark p-3 rounded shadow">⛏️ Pit Phase Progress Dashboard</h2>
+
+        <a href="{% url 'add-phaseschedule' %}" class="btn btn-warning fw-semibold shadow-sm px-3 py-1"
+            style="border-radius: 6px;">
+            ➕ Add Phase
+        </a>
+    </div>
+
+    <!-- Progress Map -->
+    <div class="card bg-dark text-light p-3 mb-4 shadow">
+        <h5>Progress Map</h5>
+        <img src="data:image/png;base64,{{ pit_map_img }}" alt="Progress Map" class="img-fluid rounded shadow">
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="row text-center mb-4">
+        <div class="col-md-3 mb-3">
+            <div class="card bg-dark text-light p-3 shadow">
+                <h6>Total Phases</h6>
+                <h3>{{ phases|length }}</h3>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card bg-dark text-light p-3 shadow">
+                <h6>Active Phases</h6>
+                <h3>{{ active_phases_count }}</h3>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card bg-dark text-light p-3 shadow">
+                <h6>Completed Phases</h6>
+                <h3>{{ completed_phases_count }}</h3>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Table -->
+    <div class="card bg-secondary p-3 text-light mb-4 shadow">
+        <h5>Phase Progress Overview</h5>
+
+        {% for p in phases %}
+        <div class="mb-3">
+            <strong>{{ p.mine_phase.pit }} - {{ p.mine_phase.name }}</strong>
+            <div class="progress" style="height: 20px;">
+                <div class="progress-bar 
+                    {% if p.status == 'completed' %}bg-success
+                    {% elif p.status == 'active' %}bg-warning
+                    {% else %}bg-info{% endif %}"
+                    role="progressbar"
+                    style="width: {{ p.current_progress }}%;">
+                    {{ p.current_progress }}%
+                </div>
+            </div>
+            <small>
+                Status: <b>{{ p.status|title }}</b> |
+                Planned: {{ p.planned_tonnage }}t |
+                Removed: {{ p.removed_tonnage }}t
+            </small>
+        </div>
+        {% empty %}
+        <p>No phase progress data available.</p>
+        {% endfor %}
+    </div>
+
+    <!-- Charts Section -->
+    <div class="row">
+        <div class="col-md-6 mb-4">
+            <div class="card bg-dark text-light p-3 shadow">
+                <h5>Tonnage Moved vs. Planned</h5>
+                <canvas id="tonnageChart" height="220"></canvas>
+            </div>
+        </div>
+
+        <div class="col-md-6 mb-4">
+            <div class="card bg-dark text-light p-3 shadow">
+                <h5>Progress by Phase (%)</h5>
+                <canvas id="progressChart" height="220"></canvas>
+            </div>
+        </div>
+
+        <div class="col-md-12 mb-4">
+            <div class="card bg-dark text-light p-3 shadow">
+                <h5>Ore vs. Waste Movement</h5>
+                <canvas id="oreWasteChart" height="220"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Variance Summary Table -->
+    <div class="card bg-dark text-light p-3 shadow mb-5">
+        <h5>Variance Summary (Removed - Planned)</h5>
+        <table class="table table-dark table-striped table-hover">
+            <thead>
+                <tr>
+                    <th>Phase</th>
+                    <th>Planned (t)</th>
+                    <th>Removed (t)</th>
+                    <th>Variance (t)</th>
+                    <th>%</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p, var in phases|zip_list:variance %}
+                <tr>
+                    <td>{{ p.mine_phase.name }}</td>
+                    <td>{{ p.planned_tonnage }}</td>
+                    <td>{{ p.removed_tonnage }}</td>
+                    <td class="{% if var >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        {{ var|floatformat:2 }}
+                    </td>
+                    <td>{{ variance_percent|floatformat:2 }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const phaseNames = {{ phase_names|safe }};
+const plannedTonnage = {{ planned_tonnage|safe }};
+const removedTonnage = {{ removed_tonnage|safe }};
+const variance = {{ variance|safe }};
+const progressPercentages = {{ progress_percentages|safe }};
+const oreMovement = {{ ore_movement|safe }};
+const wasteMovement = {{ waste_movement|safe }};
+
+const varianceColors = variance.map(v => v >= 0 ? 'rgba(76, 175, 80, 1)' : 'rgba(244, 67, 54, 1)');
+
+// --- Tonnage Chart ---
+new Chart(document.getElementById('tonnageChart'), {
+    type: 'bar',
+    data: {
+        labels: phaseNames,
+        datasets: [
+            { label: 'Planned Tonnage (t)', data: plannedTonnage, backgroundColor: '#00bcd4' },
+            { label: 'Removed Tonnage (t)', data: removedTonnage, backgroundColor: '#4caf50' },
+            {
+                label: 'Variance (Removed - Planned)',
+                data: variance,
+                type: 'line',
+                borderColor: varianceColors,
+                borderWidth: 2,
+                fill: false,
+                tension: 0.3
+            }
+        ]
+    },
+    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+});
+
+// --- Progress Chart ---
+new Chart(document.getElementById('progressChart'), {
+    type: 'line',
+    data: {
+        labels: phaseNames,
+        datasets: [
+            { label: 'Progress (%)', data: progressPercentages, borderColor: '#ff9800', fill: false, tension: 0.4 }
+        ]
+    },
+    options: {
+        scales: { y: { beginAtZero: true, max: 100 } }
+    }
+});
+
+// --- Ore vs Waste Chart ---
+new Chart(document.getElementById('oreWasteChart'), {
+    type: 'bar',
+    data: {
+        labels: phaseNames,
+        datasets: [
+            { label: 'Ore (t)', data: oreMovement, backgroundColor: '#2196f3' },
+            { label: 'Waste (t)', data: wasteMovement, backgroundColor: '#f44336' }
+        ]
+    },
+    options: {
+        indexAxis: 'y',
+        scales: { x: { beginAtZero: true } }
+    }
+});
+</script>
+{% endblock %}

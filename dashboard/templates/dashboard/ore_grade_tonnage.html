@@ -1,0 +1,102 @@
+{% extends 'dashboard/base.html' %}
+
+{% block title %}Ore Grade & Tonnage{% endblock %}
+
+{% block content %}
+<h1>Ore Grade & Tonnage by Mine Phase</h1>
+<a href="{% url 'add-oresample' %}" class="btn btn-success" style="margin-bottom: 20px;">
+    ➕ Add Ore Sample
+</a>
+
+<canvas id="oreGradeTonnageChart" width="900" height="400"></canvas>
+
+<!-- Chart.js + Luxon adapter -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+
+<script>
+async function fetchOreAndProductionData() {
+    try {
+        const oreResponse = await fetch('/api/oresamples/');
+        const oreData = await oreResponse.json();
+
+        const prodResponse = await fetch('/api/production/');
+        const prodData = await prodResponse.json();
+
+        if (!oreData.length && !prodData.length) {
+            console.log("No data available.");
+            return;
+        }
+
+        // Group ore grades by mine phase
+        const phases = [...new Set(oreData.map(item => item.mine_phase.name))];
+
+        const gradeDatasets = phases.map(phase => ({
+            label: phase + " Grade",
+            data: oreData
+                .filter(item => item.mine_phase.name === phase)
+                .map(item => ({ x: item.timestamp, y: item.grade_g_t })),
+            type: 'line',
+            yAxisID: 'yGrade',
+            borderColor: randomColor(),
+            fill: false,
+            tension: 0.1
+        }));
+
+        // Production tonnage dataset (bar chart)
+        const tonnageDataset = {
+            label: 'Tonnage',
+            
+            data: oreData.map(item => ({ x: item.timestamp, y: item.tonnage })),
+            type: 'bar',
+            yAxisID: 'yTonnage',
+            backgroundColor: 'rgba(0, 123, 255, 0.5)'
+        };
+
+        const ctx = document.getElementById('oreGradeTonnageChart').getContext('2d');
+        new Chart(ctx, {
+            data: { datasets: [...gradeDatasets, tonnageDataset] },
+            options: {
+                responsive: true,
+                parsing: { xAxisKey: 'x', yAxisKey: 'y' },
+                plugins: {
+                    title: { display: true, text: 'Ore Grade & Tonnage' },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: { unit: 'day' },
+                        title: { display: true, text: 'Date' }
+                    },
+                    yGrade: {
+                        type: 'linear',
+                        position: 'left',
+                        title: { display: true, text: 'Grade (g/t)' },
+                        beginAtZero: true
+                    },
+                    yTonnage: {
+                        type: 'linear',
+                        position: 'right',
+                        title: { display: true, text: 'Tonnage (t)' },
+                        beginAtZero: true,
+                        grid: { drawOnChartArea: false }
+                    }
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("Error fetching data:", error);
+    }
+}
+
+function randomColor() {
+    return '#' + Math.floor(Math.random() * 16777215).toString(16);
+}
+
+// Load chart
+fetchOreAndProductionData();
+</script>
+{% endblock %}

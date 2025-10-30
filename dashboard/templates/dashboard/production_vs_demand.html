@@ -1,0 +1,229 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Production vs Plant Demand{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>Production vs Plant Demand</h1>
+    <div>
+        <a href="{% url 'add-production' %}" class="btn btn-primary btn-sm me-2">Add Production</a>
+        <a href="{% url 'add-plantdemand' %}" class="btn btn-danger btn-sm">Add Plant Demand</a>
+    </div>
+</div>
+
+<!-- KPI cards -->
+<div class="row text-center mb-3">
+    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Ore (t)</small><h4 id="totalOre">0</h4></div></div>
+    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Waste (t)</small><h4 id="totalWaste">0</h4></div></div>
+    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Demand (t)</small><h4 id="totalDemand">0</h4></div></div>
+    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Variance (t)</small><h4 id="totalVariance">0</h4></div></div>
+</div>
+
+<!-- Date filter -->
+<div class="mb-2 d-flex align-items-center gap-2">
+    <div>
+        <button class="btn btn-sm btn-light" onclick="setMode('daily')">Daily</button>
+        <button class="btn btn-sm btn-light" onclick="setMode('weekly')">Weekly</button>
+        <button class="btn btn-sm btn-light" onclick="setMode('monthly')">Monthly</button>
+    </div>
+    <div class="ms-3">
+        <label>Start</label>
+        <input type="date" id="startDate">
+        <label>End</label>
+        <input type="date" id="endDate">
+        <button class="btn btn-secondary btn-sm" onclick="applyDateFilter()">Apply</button>
+    </div>
+</div>
+
+<!-- Chart -->
+<canvas id="prodDemandChart" height="120"></canvas>
+
+<!-- Table -->
+<div class="mt-3">
+    <h5>Data</h5>
+    <table class="table table-sm table-hover" id="varianceTable">
+        <thead class="table-dark">
+            <tr>
+                <th>Date</th>
+                <th>Ore (t)</th>
+                <th>Waste (t)</th>
+                <th>Total Production (t)</th>
+                <th>Demand (t)</th>
+                <th>Variance (t)</th>
+            </tr>
+        </thead>
+        <tbody id="varianceTableBody"></tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let originalData = [];
+let filteredData = [];
+let currentMode = 'daily';
+const NEGATIVE_ALERT_THRESHOLD = 3;
+
+async function initialLoad() {
+    try {
+        const prodRes = await fetch('/api/production/');
+        const prodData = await prodRes.json();
+        const demRes = await fetch('/api/plantdemand/');
+        const demandData = await demRes.json();
+
+        const demandMap = {};
+        demandData.forEach(d => {
+            const dateStr = new Date(d.timestamp).toISOString().slice(0,10);
+            demandMap[dateStr] = Number(d.required_tonnage);
+        });
+
+        const dataByDate = {};
+
+        prodData.forEach(p => {
+            const dateStr = new Date(p.timestamp).toISOString().slice(0,10);
+            if(!dataByDate[dateStr]) dataByDate[dateStr] = { ore:0, waste:0 };
+            if(p.material_type==='ore') dataByDate[dateStr].ore += Number(p.tonnage);
+            else if(p.material_type==='waste') dataByDate[dateStr].waste += Number(p.tonnage);
+        });
+
+        originalData = Object.keys(dataByDate).map(dateStr => {
+            const dateObj = new Date(dateStr);
+            const ore = dataByDate[dateStr].ore;
+            const waste = dataByDate[dateStr].waste;
+            const production = ore + waste;
+            const demand = demandMap[dateStr] || 0;
+            return {
+                date: dateObj,
+                label: dateObj.toLocaleDateString(),
+                ore, waste, production, demand,
+                variance: production - demand
+            };
+        }).sort((a,b)=>a.date-b.date);
+
+        applyCurrentView();
+        startWebSocket();
+
+    } catch(err) {
+        console.error("Error fetching data:", err);
+    }
+}
+
+function renderChart(data) {
+    const ctx = document.getElementById('prodDemandChart').getContext('2d');
+    if(window.prodChart) window.prodChart.destroy();
+
+    window.prodChart = new Chart(ctx, {
+        type:'line',
+        data:{
+            labels:data.map(d=>d.label),
+            datasets:[
+                { label:'Production', data:data.map(d=>d.production), borderColor:'#006AFF', backgroundColor:'rgba(0,106,255,0.2)', tension:0.2 },
+                { label:'Demand', data:data.map(d=>d.demand), borderColor:'#FF3C3C', backgroundColor:'rgba(255,60,60,0.2)', tension:0.2 },
+                { label:'Variance', data:data.map(d=>d.variance), borderColor:'#28C76F', backgroundColor:'rgba(40,199,111,0.2)', tension:0.2 }
+            ]
+        },
+        options:{
+            responsive:true,
+            plugins:{ tooltip:{
+                callbacks:{ label:ctx=>{
+                    const v = ctx.raw;
+                    if(ctx.dataset.label==='Variance') return `Variance: ${v} t (${v>=0?"Above Demand":"Below Demand"})`;
+                    return `${ctx.dataset.label}: ${v} t`;
+                }}
+            }},
+            scales:{
+                x:{ title:{ display:true, text:'Date' } },
+                y:{ title:{ display:true, text:'Tonnage (t)' }, beginAtZero:true }
+            }
+        }
+    });
+}
+
+function renderTableAndKPI(data){
+    const tbody = document.getElementById('varianceTableBody');
+    tbody.innerHTML='';
+    let totalOre=0,totalWaste=0,totalDemand=0,totalVariance=0;
+
+    data.forEach(d=>{
+        totalOre+=d.ore;
+        totalWaste+=d.waste;
+        totalDemand+=d.demand;
+        totalVariance+=d.variance;
+
+        const tr = document.createElement('tr');
+        tr.innerHTML=`
+            <td>${d.label}</td>
+            <td>${d.ore}</td>
+            <td>${d.waste}</td>
+            <td>${d.production}</td>
+            <td>${d.demand}</td>
+            <td class="${d.variance>=0?'text-success':'text-danger'}">${d.variance}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    document.getElementById('totalOre').innerText = totalOre;
+    document.getElementById('totalWaste').innerText = totalWaste;
+    document.getElementById('totalDemand').innerText = totalDemand;
+    document.getElementById('totalVariance').innerText = totalVariance;
+}
+
+function applyCurrentView(){
+    let result = [...originalData];
+    const startVal = document.getElementById('startDate').value;
+    const endVal = document.getElementById('endDate').value;
+    if(startVal) result = result.filter(d=>d.date >= new Date(startVal));
+    if(endVal) result = result.filter(d=>d.date <= new Date(endVal));
+    filteredData=result;
+    renderChart(filteredData);
+    renderTableAndKPI(filteredData);
+}
+
+function setMode(m){ currentMode=m; applyCurrentView(); }
+function applyDateFilter(){ applyCurrentView(); }
+
+function startWebSocket(){
+    const wsProtocol = location.protocol==='https:'?'wss':'ws';
+    const socket = new WebSocket(`${wsProtocol}://${location.host}/ws/prod-demand/`);
+    socket.onmessage = e=>{
+        const msg=JSON.parse(e.data);
+        if(msg.type==='update'){
+            const p=msg.payload;
+            const dateStr=new Date(p.timestamp).toISOString().slice(0,10);
+            let idx = originalData.findIndex(d=>d.date.toISOString().slice(0,10)===dateStr);
+            if(idx>=0){
+                if(p.model==='production'){
+                    if(p.material_type==='ore') originalData[idx].ore = Number(p.tonnage);
+                    else originalData[idx].waste = Number(p.tonnage);
+                    originalData[idx].production = originalData[idx].ore + originalData[idx].waste;
+                } else if(p.model==='plantdemand'){
+                    originalData[idx].demand = Number(p.required_tonnage);
+                }
+                originalData[idx].variance = originalData[idx].production - originalData[idx].demand;
+            } else {
+                let ore=0,waste=0,production=0,demand=0;
+                if(p.model==='production'){ if(p.material_type==='ore') ore=p.tonnage; else waste=p.tonnage; production=ore+waste;}
+                else if(p.model==='plantdemand'){ demand=p.required_tonnage; }
+                originalData.push({
+                    date:new Date(p.timestamp),
+                    label:new Date(p.timestamp).toLocaleDateString(),
+                    ore,waste,production,demand,
+                    variance:production-demand
+                });
+                originalData.sort((a,b)=>a.date-b.date);
+            }
+            applyCurrentView();
+        }
+    };
+}
+
+function exportCSV(){
+    const rows=[['Date','Ore','Waste','Production','Demand','Variance']];
+    originalData.forEach(d=>rows.push([d.label,d.ore,d.waste,d.production,d.demand,d.variance]));
+    const blob=new Blob([rows.map(r=>r.join(',')).join('\n')],{type:'text/csv'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='prod_vs_demand.csv'; a.click();
+}
+
+initialLoad();
+</script>
+{% endblock %}

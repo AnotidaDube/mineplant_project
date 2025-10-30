@@ -1,0 +1,120 @@
+{% extends 'dashboard/base.html' %}
+{% load static %}
+
+{% block title %}📦 Stockpile Forecast{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+    <!-- Header and Add Button -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="text-light bg-dark p-3 rounded shadow">📦 Stockpile Forecast</h2>
+        <a href="{% url 'add-stockpile' %}" class="btn btn-success">➕ Add Stockpile</a>
+    </div>
+
+    <p class="text-light mb-4">
+        Monitor current vs projected stockpile levels and ore grades. Variances highlight overstock or understock situations.
+    </p>
+
+    <!-- Chart Card -->
+    <div class="card bg-dark text-light p-3 shadow mb-4">
+        <h5 class="mb-3">Stockpile Forecast Over Time</h5>
+        <div style="position: relative; height: 400px;">
+            <canvas id="stockpileChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Stockpile Table -->
+    <div class="card bg-dark text-light p-3 shadow mb-4">
+        <h5 class="mb-3">Stockpile Summary</h5>
+        <table class="table table-dark table-striped table-hover">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Actual Tonnage (t)</th>
+                    <th>Projected Tonnage (t)</th>
+                    <th>Ore Grade (%)</th>
+                    <th>Variance (t)</th>
+                    <th>Variance (%)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in stockpile_data %}
+                <tr>
+                    <td>{{ s.name }}</td>
+                    <td>{{ s.current_tonnage|floatformat:1 }}</td>
+                    <td>{{ s.projected_tonnage|floatformat:1 }}</td>
+                    <td>{{ s.grade|default:"N/A" }}</td>
+                    <td style="color: {% if s.variance >= 0 %}green{% else %}red{% endif %};">
+                        {{ s.variance|floatformat:1 }}
+                    </td>
+                    <td style="color: {% if s.variance_percent >= 0 %}green{% else %}red{% endif %};">
+                        {{ s.variance_percent|floatformat:1 }}%
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const ctx = document.getElementById('stockpileChart').getContext('2d');
+
+    const stockpileNames = {{ stockpile_names_json|safe }};
+    const actualTonnage = {{ actual_tonnage_json|safe }};
+    const projectedTonnage = {{ projected_tonnage_json|safe }};
+
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: stockpileNames,
+            datasets: [
+                {
+                    label: 'Actual Tonnage',
+                    data: actualTonnage,
+                    backgroundColor: 'rgba(54, 162, 235, 0.7)'
+                },
+                {
+                    label: 'Projected Tonnage',
+                    data: projectedTonnage,
+                    backgroundColor: 'rgba(255, 99, 132, 0.5)'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Stockpile Forecast vs Actual'
+                },
+                tooltip: {
+                    callbacks: {
+                        afterBody: function(context) {
+                            const idx = context[0].dataIndex;
+                            const variance = actualTonnage[idx] - projectedTonnage[idx];
+                            const variancePct = projectedTonnage[idx] ? ((variance / projectedTonnage[idx]) * 100).toFixed(1) : 0;
+                            return `Variance: ${variance.toFixed(1)} t (${variancePct}%)`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Tonnage (t)' }
+                },
+                x: {
+                    title: { display: true, text: 'Stockpile' }
+                }
+            }
+        }
+    });
+});
+</script>
+{% endblock %}

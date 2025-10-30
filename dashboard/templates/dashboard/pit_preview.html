@@ -1,0 +1,65 @@
+{% extends 'dashboard/base.html' %}
+{% block title %}Pit Phase Progress Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <h2 class="text-light bg-dark p-3 rounded shadow">⛏️ Pit Phase Progress Dashboard</h2>
+
+    <!-- Progress Map -->
+    <div class="card bg-dark text-light p-3 mb-4 shadow">
+        <h5>Progress Map</h5>
+        {% if pit_map_img %}
+            <img src="data:image/png;base64,{{ pit_map_img }}" class="img-fluid rounded shadow" alt="Progress Map">
+        {% elif error %}
+            <p class="text-danger">{{ error }}</p>
+        {% else %}
+            <p>No map available.</p>
+        {% endif %}
+    </div>
+
+    <!-- Charts -->
+    <div class="card bg-dark text-light p-3 shadow mb-4">
+        <h5>Phase Mining Progress</h5>
+        <canvas id="phaseDonutChart" style="max-height:400px;"></canvas>
+    </div>
+
+    <div class="card bg-dark text-light p-3 shadow mb-4">
+        <h5>Progress vs Schedule</h5>
+        <canvas id="phaseProgressChart" style="max-height:400px;"></canvas>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const phaseNames = {{ phase_names|safe }};
+const progressPercentages = {{ progress_percent|safe }};
+const plannedTonnage = {{ planned_tonnage|safe }};
+const removedTonnage = {{ removed_tonnage|safe }};
+
+// Donut chart
+new Chart(document.getElementById('phaseDonutChart'), {
+    type: 'doughnut',
+    data: {
+        labels: phaseNames,
+        datasets: [{
+            data: progressPercentages,
+            backgroundColor: phaseNames.map((_, i) => `hsl(${i*50 % 360}, 70%, 50%)`)
+        }]
+    },
+    options: { responsive: true, plugins: { title: { display: true, text: '% Mined per Phase' } } }
+});
+
+// Bar chart
+new Chart(document.getElementById('phaseProgressChart'), {
+    type: 'bar',
+    data: {
+        labels: phaseNames,
+        datasets: [
+            { label: 'Planned Tonnage', data: plannedTonnage, backgroundColor: 'rgba(255,165,0,0.5)' },
+            { label: 'Actual Tonnage', data: removedTonnage, backgroundColor: 'rgba(0,128,0,0.7)' }
+        ]
+    },
+    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+});
+</script>
+{% endblock %}
