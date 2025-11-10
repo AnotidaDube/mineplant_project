@@ -5,14 +5,12 @@
 
 {% block content %}
 <style>
-    /* Background image */
     body {
         background: url("{% static 'dashboard/images/production.jpg' %}") no-repeat center center fixed;
         background-size: cover;
-        color: #f7f7f7; /* Light text for visibility */
+        color: #f7f7f7;
     }
 
-    /* Slight dark overlay to reduce background contrast */
     body::before {
         content: "";
         position: fixed;
@@ -20,16 +18,15 @@
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(0,0,0,0.45);
+        background: rgba(0, 0, 0, 0.45);
         z-index: -1;
     }
 
-    /* Card enhanced visibility */
     .card {
-        background: rgba(0,0,0,0.65); /* darker but transparent */
-        backdrop-filter: blur(4px); /* subtle luxury effect */
+        background: rgba(0, 0, 0, 0.65);
+        backdrop-filter: blur(4px);
         border-radius: 12px;
-        color: #ffffff; /* Bright text inside card */
+        color: #ffffff;
     }
 
     label {
@@ -39,20 +36,37 @@
 
     .card-header {
         background: rgba(30, 30, 30, 0.85) !important;
-        border-bottom: 1px solid rgba(255,255,255,0.15);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.15);
     }
 
     a, h2, h4, p {
         color: #ffffff !important;
     }
+
+    /* Add result styling */
+    #break-result {
+        margin-top: 10px;
+        font-weight: bold;
+        font-size: 1rem;
+    }
 </style>
+
 <div class="container mt-4">
-    <h2>Add Production Record</h2>
-    <form method="POST">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit" class="btn btn-primary">Save</button>
-        <a href="{% url 'production-vs-demand' %}" class="btn btn-secondary">Cancel</a>
-    </form>
+    <div class="card shadow p-4">
+        <div class="card-header text-center mb-3">
+            <h2>Add Production Record</h2>
+        </div>
+        <form method="POST" id="productionForm">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <div id="break-result"></div>
+            <button type="submit" class="btn btn-primary mt-3">Save</button>
+            <a href="{% url 'production-vs-demand' %}" class="btn btn-secondary mt-3">Cancel</a>
+        </form>
+    </div>
 </div>
+
+<!-- Link to external JS file -->
+<script src="{% static 'dashboard/js/production_break_status.js' %}"></script>
+
 {% endblock %}

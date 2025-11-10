@@ -1,14 +1,20 @@
 {% extends 'dashboard/base.html' %}
-
 {% block title %}Ore Grade & Tonnage{% endblock %}
 
 {% block content %}
-<h1>Ore Grade & Tonnage by Mine Phase</h1>
-<a href="{% url 'add-oresample' %}" class="btn btn-success" style="margin-bottom: 20px;">
-    ➕ Add Ore Sample
-</a>
+<h2 class="bg-dark text-light p-3 rounded shadow">⛏️ Ore Grade & Tonnage Over Time</h2>
 
-<canvas id="oreGradeTonnageChart" width="900" height="400"></canvas>
+<!-- Action Buttons -->
+<div class="mb-3 d-flex gap-2">
+    <a href="{% url 'add-oresample' %}" class="btn btn-success">➕ Add Ore Sample</a>
+    <a href="{% url 'export-pdf' %}" class="btn btn-outline-danger">🧾 Export to PDF</a>
+    <button id="refreshChartBtn" class="btn btn-outline-primary ms-auto">🔄 Refresh Chart</button>
+</div>
+
+<!-- Chart Canvas -->
+<div class="card shadow p-3">
+    <canvas id="oreGradeTonnageChart" width="900" height="400"></canvas>
+</div>
 
 <!-- Chart.js + Luxon adapter -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -16,53 +22,87 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
 
 <script>
+let oreChart;
+
 async function fetchOreAndProductionData() {
     try {
-        const oreResponse = await fetch('/api/oresamples/');
-        const oreData = await oreResponse.json();
+        const response = await fetch('/api/oresamples/');
+        const oreData = await response.json();
 
-        const prodResponse = await fetch('/api/production/');
-        const prodData = await prodResponse.json();
-
-        if (!oreData.length && !prodData.length) {
-            console.log("No data available.");
+        if (!oreData.length) {
+            console.warn("No ore data found.");
             return;
         }
 
-        // Group ore grades by mine phase
         const phases = [...new Set(oreData.map(item => item.mine_phase.name))];
+        const datasets = [];
 
-        const gradeDatasets = phases.map(phase => ({
-            label: phase + " Grade",
-            data: oreData
-                .filter(item => item.mine_phase.name === phase)
-                .map(item => ({ x: item.timestamp, y: item.grade_g_t })),
+        // Actual Grade per Phase
+        phases.forEach(phase => {
+            datasets.push({
+                label: `${phase} Actual Grade`,
+                data: oreData
+                    .filter(item => item.mine_phase.name === phase)
+                    .map(item => ({ x: item.timestamp, y: item.actual_grade_g_t })),
+                type: 'line',
+                yAxisID: 'yGrade',
+                borderColor: randomColor(),
+                fill: false,
+                tension: 0.1
+            });
+        });
+
+        // Expected Grade
+        datasets.push({
+            label: 'Expected Grade',
+            data: oreData.map(item => ({ x: item.timestamp, y: item.expected_grade })),
             type: 'line',
             yAxisID: 'yGrade',
-            borderColor: randomColor(),
+            borderColor: 'rgba(0, 255, 0, 0.8)',
+            borderDash: [5, 5],
             fill: false,
             tension: 0.1
-        }));
+        });
 
-        // Production tonnage dataset (bar chart)
-        const tonnageDataset = {
-            label: 'Tonnage',
-            
-            data: oreData.map(item => ({ x: item.timestamp, y: item.tonnage })),
-            type: 'bar',
+        // Actual Tonnage (bright line)
+        datasets.push({
+            label: 'Actual Tonnage',
+            data: oreData.map(item => ({ x: item.timestamp, y: item.actual_tonnage })),
+            type: 'line',
             yAxisID: 'yTonnage',
-            backgroundColor: 'rgba(0, 123, 255, 0.5)'
-        };
+            borderColor: 'rgba(255, 99, 132, 1)',         // Bright pink-red line
+            backgroundColor: 'rgba(255, 99, 132, 0.2)',   // Soft fill under line (optional)
+            borderWidth: 3,                               // Thicker line
+            pointRadius: 4,                               // Larger data points
+            pointBackgroundColor: 'rgba(255, 99, 132, 1)',// Matching point color
+            tension: 0.3,                                 // Smooth curve
+            fill: false                                   // No area fill
+        });
+
+        // Expected Tonnage
+        datasets.push({
+            label: 'Expected Tonnage',
+            data: oreData.map(item => ({ x: item.timestamp, y: item.expected_tonnage })),
+            type: 'line',
+            yAxisID: 'yTonnage',
+            borderColor: 'rgba(128, 0, 128, 0.8)',
+            borderDash: [6, 3],
+            fill: false,
+            tension: 0.1
+        });
+
+        if (oreChart) oreChart.destroy();
 
         const ctx = document.getElementById('oreGradeTonnageChart').getContext('2d');
-        new Chart(ctx, {
-            data: { datasets: [...gradeDatasets, tonnageDataset] },
+        oreChart = new Chart(ctx, {
+            data: { datasets },
             options: {
                 responsive: true,
                 parsing: { xAxisKey: 'x', yAxisKey: 'y' },
                 plugins: {
-                    title: { display: true, text: 'Ore Grade & Tonnage' },
-                    tooltip: { mode: 'index', intersect: false }
+                    title: { display: true, text: 'Ore Grade & Tonnage Over Time' },
+                    tooltip: { mode: 'index', intersect: false },
+                    legend: { position: 'bottom' }
                 },
                 scales: {
                     x: {
@@ -88,7 +128,7 @@ async function fetchOreAndProductionData() {
         });
 
     } catch (error) {
-        console.error("Error fetching data:", error);
+        console.error("Error loading chart data:", error);
     }
 }
 
@@ -96,7 +136,15 @@ function randomColor() {
     return '#' + Math.floor(Math.random() * 16777215).toString(16);
 }
 
-// Load chart
+document.getElementById('refreshChartBtn').addEventListener('click', () => {
+    fetchOreAndProductionData();
+    const msg = document.createElement('div');
+    msg.classList.add('alert-inline', 'bg-info', 'text-white', 'position-fixed', 'top-0', 'end-0', 'm-3', 'p-2', 'rounded', 'shadow');
+    msg.textContent = '🔄 Chart refreshed';
+    document.body.appendChild(msg);
+    setTimeout(() => msg.remove(), 2000);
+});
+
 fetchOreAndProductionData();
 </script>
 {% endblock %}

@@ -16,10 +16,15 @@ urlpatterns = [
     path('dashboard/add_oresample/', views.add_oresample, name='add-oresample'),
     path('dashboard/add_plantdemand/', views.add_plantdemand, name='add-plantdemand'),
     path('dashboard/add_phaseschedule/', views.add_phaseschedule, name='add-phaseschedule'),
+    path('update-expected/<int:phase_id>/', views.update_expected_values, name='update-expected'),
+    path('export-pdf/', views.export_pdf, name='export-pdf'),
+    
+
 
     #pitmap
     path('pit-map/', views.pit_map_view, name='pit_map'),
    
     path('dashboard/pit_phase_dashboard/', views.pit_phase_dashboard, name='pit-phase-dashboard'),
+    
 
 ]

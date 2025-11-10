@@ -1,19 +1,44 @@
 from django import forms
-from .models import ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule
+from .models import ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule, MinePhase, Plant
+
+
+class PlantDemandForm(forms.ModelForm):
+    """Form to handle demand for multiple plants."""
+    plant = forms.ModelChoiceField(
+        queryset=Plant.objects.all(),
+        empty_label="Select Plant",
+        widget=forms.Select(attrs={'class': 'form-control'})
+    )
+
+    class Meta:
+        model = PlantDemand
+        fields = ['plant', 'timestamp', 'required_tonnage']
+
 
 class ProductionRecordForm(forms.ModelForm):
+    """Form for entering production and comparing expected vs actual tonnage."""
     class Meta:
         model = ProductionRecord
-        fields = ['mine_phase', 'timestamp', 'tonnage', 'material_type', 'source']
+        fields = ['mine_phase', 'plant', 'timestamp', 'expected_tonnage', 'tonnage', 'material_type', 'source']
         widgets = {
-            'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local'})
+            'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-control'}),
+            'mine_phase': forms.Select(attrs={'class': 'form-control'}),
+            'plant': forms.Select(attrs={'class': 'form-control'}),
+            'expected_tonnage': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Expected tons'}),
+            'tonnage': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Actual tons'}),
+            'material_type': forms.Select(attrs={'class': 'form-control'}),
+            'source': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Source pit or phase'}),
         }
-
+        
 class OreSampleForm(forms.ModelForm):
     class Meta:
         model = OreSample
-        fields = ['mine_phase', 'timestamp', 'sample_id', 'grade_g_t', 'tonnage']
-        widgets = {
+        fields = [
+            'mine_phase', 'sample_id',
+            'actual_grade_g_t', 'actual_tonnage',
+            'expected_grade', 'expected_tonnage'
+        ]
+        widgets = { 
             'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local'})
         }
 
@@ -55,4 +80,21 @@ class PhaseScheduleForm(forms.ModelForm):
         widgets = {
             'planned_start': forms.DateInput(attrs={'type': 'date'}),
             'planned_end': forms.DateInput(attrs={'type': 'date'}),
+        }
+
+class ExpectedValuesForm(forms.ModelForm):
+    class Meta:
+        model = MinePhase
+        fields = ['expected_grade', 'expected_tonnage']
+        widgets = {
+            'expected_grade': forms.NumberInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Enter expected grade (g/t)',
+                'step': '0.01'
+            }),
+            'expected_tonnage': forms.NumberInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Enter expected tonnage (tons)',
+                'step': '0.01'
+            }),
         }

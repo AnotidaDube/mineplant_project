@@ -8,4 +8,6 @@ urlpatterns = [
     path('plantdemand/', views.PlantDemandList.as_view(), name='plantdemand-list'),
     path('stockpiles/', views.StockpileList.as_view(), name='stockpile-list'),
     path('phaseschedule/', views.PhaseScheduleList.as_view(), name='phaseschedule-list'),
+    path("api/update-expected/<int:phase_id>/", views.update_expected_values, name="update-expected"),
+
 ]

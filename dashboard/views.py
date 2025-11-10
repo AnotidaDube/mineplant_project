@@ -2,15 +2,22 @@ import base64
 from io import BytesIO
 import os
 import json
+from django.views.decorators.csrf import csrf_exempt
+from reportlab.pdfgen import canvas
 from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseNotAllowed, HttpResponse
 from django.db.models import Sum
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.pagesizes import A4, letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 from dashboard.utils.str_parser import parse_str_file
 from django.conf import settings
 from PIL import Image, ImageDraw
 from django.shortcuts import render, redirect
-from .forms import ProductionRecordForm, OreSampleForm, PlantDemandForm, StockpileForm, PhaseScheduleForm
+from .forms import ProductionRecordForm, OreSampleForm, PlantDemandForm, StockpileForm, PhaseScheduleForm, ExpectedValuesForm
 from rest_framework import generics
-from .models import MinePhase, ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule
+from .models import MinePhase, ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule, Plant
 from .serializers import (
     MinePhaseSerializer,
     ProductionRecordSerializer,
@@ -21,33 +28,39 @@ from .serializers import (
 )
 from matplotlib import pyplot as plt
 
-# --- List APIs ---
+# List of APIs
 class MinePhaseList(generics.ListAPIView):
     queryset = MinePhase.objects.all()
     serializer_class = MinePhaseSerializer
+
 
 class ProductionRecordList(generics.ListAPIView):
     queryset = ProductionRecord.objects.all()
     serializer_class = ProductionRecordSerializer
 
+
 class OreSampleList(generics.ListAPIView):
     queryset = OreSample.objects.all()
     serializer_class = OreSampleSerializer
+
 
 class PlantDemandList(generics.ListAPIView):
     queryset = PlantDemand.objects.all()
     serializer_class = PlantDemandSerializer
 
+
 class StockpileList(generics.ListAPIView):
     queryset = Stockpile.objects.all()
     serializer_class = StockpileSerializer
+
 
 class PhaseScheduleList(generics.ListAPIView):
     queryset = PhaseSchedule.objects.all()
     serializer_class = PhaseScheduleSerializer
 
+
 def production_vs_demand_view(request):
-    # If it's a data fetch request, return API response (charts use this soon)
+    """ If it's a data fetch request, return API response (charts use this soon) """
     if request.headers.get("x-requested-with") == "XMLHttpRequest":
         data = {
             "production": list(ProductionRecord.objects.values()),
@@ -55,7 +68,7 @@ def production_vs_demand_view(request):
         }
         return JsonResponse(data, safe=False)
 
-    # Dashboard context (optional initial stats)
+    """ Dashboard context (optional initial stats)"""
     context = {
         "page_title": "Production vs Demand Dashboard",
         "total_production": ProductionRecord.objects.aggregate(Sum('tonnage'))['tonnage__sum'] or 0,
@@ -63,8 +76,31 @@ def production_vs_demand_view(request):
     }
 
     return render(request, "dashboard/production_vs_demand.html", context)
+
+
 def ore_grade_tonnage_view(request):
-    return render(request, 'dashboard/ore_grade_tonnage.html')
+    phases = MinePhase.objects.all()
+
+    phase_data = []
+    for phase in phases:
+        phase_data.append({
+            'id': phase.id,  # ✅ Include ID here
+            'name': phase.name,
+            'pit': phase.pit,
+            'expected_grade': phase.expected_grade or 0,
+            'actual_grade': phase.actual_grade(),
+            'variance_grade': phase.variance_grade(),
+            'expected_tonnage': phase.expected_tonnage or 0,
+            'actual_tonnage': phase.actual_tonnage(),
+            'variance_tonnage': phase.variance_tonnage(),
+        })
+
+    # Provide JSON-stringified data for Chart.js & JS consumption
+    context = {
+        'phase_data': phase_data,
+        'phase_data_json': json.dumps(phase_data),
+    }
+    return render(request, 'dashboard/ore_grade_tonnage.html', context)
 
 
 
@@ -92,14 +128,15 @@ def stockpile_forecast_view(request):
     }
     return render(request, 'dashboard/stockpile_forecast.html', context)
 
+
 def phase_progress_view(request):
     phases = PhaseSchedule.objects.select_related('mine_phase').all().order_by('mine_phase__sequence_order')
 
-    # Auto-refresh tonnage values
+    """ Auto-refresh tonnage values """
     for p in phases:
         p.update_removed_tonnage()
 
-    # Filter by status
+    """ Filter by status """
     active_phases = phases.filter(status='active')
     completed_phases = phases.filter(status='completed')
 
@@ -159,6 +196,7 @@ def phase_progress_view(request):
 
     return render(request, 'dashboard/phase_progress.html', context)
 
+
 def mine_plant_dashboard(request):
     """
     Renders the main dashboard home page linking all sections.
@@ -166,8 +204,9 @@ def mine_plant_dashboard(request):
     return render(request, 'dashboard/home.html')
 
 
-# --- Add Stockpile ---
+
 def add_stockpile(request):
+    """ -In this view we Add Stockpile"""
     if request.method == 'POST':
         form = StockpileForm(request.POST)
         if form.is_valid():
@@ -177,8 +216,9 @@ def add_stockpile(request):
         form = StockpileForm()
     return render(request, 'dashboard/add_stockpile.html', {'form': form})
 
-# --- Add Production ---
+
 def add_production(request):
+    """--- Add Production ---"""
     if request.method == 'POST':
         form = ProductionRecordForm(request.POST)
         if form.is_valid():
@@ -186,10 +226,13 @@ def add_production(request):
             return redirect('production-vs-demand')  # goes to production vs demand dashboard
     else:
         form = ProductionRecordForm()
-    return render(request, 'dashboard/add_production.html', {'form': form})
+    return render(request, 'dashboard/add_production.html', {
+        'form': form,
+        'plants': Plant.objects.all()
+    })
 
-# --- Add Ore Sample ---
 def add_oresample(request):
+    """ --- Add Ore Sample ---"""
     if request.method == 'POST':
         form = OreSampleForm(request.POST)
         if form.is_valid():
@@ -204,8 +247,9 @@ def add_oresample(request):
         'samples': samples
     })
 
-# --- Add Plant Demand ---
+
 def add_plantdemand(request):
+    """ --- Add Plant Demand ---"""
     if request.method == 'POST':
         form = PlantDemandForm(request.POST)
         if form.is_valid():
@@ -231,7 +275,7 @@ def welcome_dashboard(request):
     return render(request, 'dashboard/home_dashboard.html')
 
 def pit_map_view(request):
-    # Path to STR file (adjust if yours has a different name)
+    """ Path to STR file (adjust if yours has a different name) """
     str_file = os.path.join(
         os.path.dirname(__file__),
         'static', 'data', 'pit_design.str'
@@ -329,3 +373,67 @@ def pit_phase_dashboard(request):
         "total_variance": total_variance,
     }
     return render(request, "dashboard/pit_phase_dashboard.html", context)
+
+@csrf_exempt
+def update_expected_values(request, phase_id):
+    """AJAX endpoint for inline editing of expected grade/tonnage."""
+    if request.method == "POST":
+        try:
+            data = json.loads(request.body)
+            field = data.get("field")
+            value = data.get("value")
+
+            phase = MinePhase.objects.get(id=phase_id)
+
+            if field not in ["expected_grade", "expected_tonnage"]:
+                return JsonResponse({"success": False, "error": "Invalid field"}, status=400)
+
+            # Convert numeric values safely
+            try:
+                value = float(value)
+            except ValueError:
+                return JsonResponse({"success": False, "error": "Invalid number"}, status=400)
+
+            setattr(phase, field, value)
+            phase.save()
+
+            return JsonResponse({"success": True, "message": f"{field.replace('_',' ').title()} updated successfully."})
+
+        except MinePhase.DoesNotExist:
+            return JsonResponse({"success": False, "error": "Phase not found"}, status=404)
+        except Exception as e:
+            return JsonResponse({"success": False, "error": str(e)}, status=500)
+
+    return JsonResponse({"success": False, "error": "Invalid request method"}, status=405)
+
+
+def export_pdf(request):
+    response = HttpResponse(content_type='application/pdf')
+    response['Content-Disposition'] = 'attachment; filename="ore_grade_tonnage.pdf"'
+
+    doc = SimpleDocTemplate(response, pagesize=A4)
+    data = [['Mine Phase', 'Expected Grade', 'Actual Grade', 'Variance Grade',
+             'Expected Tonnage', 'Actual Tonnage', 'Variance Tonnage']]
+
+    for phase in MinePhase.objects.all():
+        data.append([
+            phase.name,
+            phase.expected_grade,
+            phase.actual_grade(),
+            phase.variance_grade(),
+            phase.expected_tonnage,
+            phase.actual_tonnage(),
+            phase.variance_tonnage()
+        ])
+
+    table = Table(data)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.darkgrey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+    ]))
+
+    doc.build([table])
+    return response

@@ -1,0 +1,21 @@
+{% extends "dashboard/base.html" %}
+{% block content %}
+<div class="container mt-4 text-light">
+    <h2 class="bg-dark p-3 rounded shadow">🎯 Update Expected Values for {{ phase.name }}</h2>
+
+    <form method="POST" class="bg-dark p-4 rounded shadow mt-3">
+        {% csrf_token %}
+        <div class="form-group mb-3">
+            <label>Expected Grade (g/t)</label>
+            {{ form.expected_grade }}
+        </div>
+        <div class="form-group mb-3">
+            <label>Expected Tonnage (tons)</label>
+            {{ form.expected_tonnage }}
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save</button>
+        <a href="{% url 'ore-grade-tonnage' %}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}
