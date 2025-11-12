@@ -95,7 +95,8 @@
                href="{% url 'ore-grade-tonnage' %}">Ore Grade & Tonnage</a>
             <a class="nav-link {% if request.resolver_match.url_name == 'stockpile-forecast' %}active{% endif %}" 
                href="{% url 'stockpile-forecast' %}">Stockpile Forecast</a>
-            
+            <a class="nav-link {% if request.resolver_match.url_name == 'stockpile-forecast' %}active{% endif %}" href="{% url 'processing-loss-dashboard' %}">Processing Loss Analysis</a>
+
             <a class="nav-link" href="#">Logout</a>
         </nav>
     </div>

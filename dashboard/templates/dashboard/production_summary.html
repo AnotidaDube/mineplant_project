@@ -1,0 +1,30 @@
+{% extends "dashboard/base.html" %}
+
+{% block content %}
+<h2>Production Summary</h2>
+<table class="table">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Plant</th>
+            <th>Expected</th>
+            <th>Mined</th>
+            <th>Variance</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for record in records %}
+        <tr>
+            <td>{{ record.timestamp }}</td>
+            <td>{{ record.plant }}</td>
+            <td>{{ record.expected_tonnage }}</td>
+            <td>{{ record.tonnage }}</td>
+            <td>{{ record.variance }}</td>
+            <td>{{ record.status }}</td>
+
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

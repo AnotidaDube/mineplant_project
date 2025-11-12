@@ -19,7 +19,7 @@ class ProductionRecordForm(forms.ModelForm):
     """Form for entering production and comparing expected vs actual tonnage."""
     class Meta:
         model = ProductionRecord
-        fields = ['mine_phase', 'plant', 'timestamp', 'expected_tonnage', 'tonnage', 'material_type', 'source']
+        fields = ['mine_phase', 'plant', 'timestamp', 'expected_tonnage', 'tonnage', 'grade', 'recovery', 'gold_price', 'material_type', 'source', 'variance']
         widgets = {
             'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-control'}),
             'mine_phase': forms.Select(attrs={'class': 'form-control'}),
@@ -28,8 +28,25 @@ class ProductionRecordForm(forms.ModelForm):
             'tonnage': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Actual tons'}),
             'material_type': forms.Select(attrs={'class': 'form-control'}),
             'source': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Source pit or phase'}),
+            'variance': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Variance'}),
         }
-        
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['variance'].widget.attrs['readonly'] = True
+
+        # ✅ Show variance if editing an existing record
+        if self.instance and self.instance.variance is not None:
+            self.fields['variance'].initial = self.instance.variance
+
+    def clean(self):
+        cleaned_data = super().clean()
+        tonnage = cleaned_data.get('tonnage')
+        expected = cleaned_data.get('expected_tonnage')
+        if tonnage is not None and expected is not None:
+            cleaned_data['variance'] = tonnage - expected
+        return cleaned_data   
+    
+                                  
 class OreSampleForm(forms.ModelForm):
     class Meta:
         model = OreSample

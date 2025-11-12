@@ -9,6 +9,7 @@ urlpatterns = [
     path('dashboard/phase_progress/', views.phase_progress_view, name='pit_phase_dashboard'),
     path('dashboard/', views.mine_plant_dashboard, name='mine_plant_dashboard'),
     path('', views.welcome_dashboard, name='home_dashboard'),
+    path('production_summary/', views.production_summary, name='production_summary'),
     
     # Add data input pages
     path('dashboard/add_stockpile/', views.add_stockpile, name='add-stockpile'),
@@ -26,5 +27,8 @@ urlpatterns = [
    
     path('dashboard/pit_phase_dashboard/', views.pit_phase_dashboard, name='pit-phase-dashboard'),
     
+    #proccess plant dashboard
+    path('processing/loss/', views.processing_loss_dashboard, name='processing-loss-dashboard'),
+    path('processing/loss/data/', views.processing_loss_data, name='processing-loss-data'),
 
 ]

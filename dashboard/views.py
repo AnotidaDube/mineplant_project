@@ -27,6 +27,10 @@ from .serializers import (
     PhaseScheduleSerializer
 )
 from matplotlib import pyplot as plt
+from django.utils.timezone import make_aware
+from datetime import date
+
+
 
 # List of APIs
 class MinePhaseList(generics.ListAPIView):
@@ -437,3 +441,73 @@ def export_pdf(request):
 
     doc.build([table])
     return response
+
+
+def production_summary(request):
+    records = ProductionRecord.objects.order_by('-timestamp')[:20]  # last 20 records
+    return render(request, 'dashboard/production_summary.html', {'records': records})
+
+
+#adding these views for experimental puropses and later integration
+def processing_loss_dashboard(request):
+    # Main page; charts fetch data via AJAX from `processing_loss_data`
+    return render(request, 'dashboard/processing_loss_analysis.html')
+
+def processing_loss_data(request):
+    period = request.GET.get('period', 'daily')
+    start = request.GET.get('start')
+    end = request.GET.get('end')
+
+    qs = ProductionRecord.objects.all()
+
+    # ✅ Match date-only input from frontend
+    if start:
+        start_date = date.fromisoformat(start)
+        qs = qs.filter(timestamp__date__gte=start_date)
+    if end:
+        end_date = date.fromisoformat(end)
+        qs = qs.filter(timestamp__date__lte=end_date)
+
+    qs = [r for r in qs if r.is_underbreak()]
+
+    # ✅ Aggregate into buckets
+    buckets = {}
+
+    def bucket_key(rec):
+        if period == 'weekly':
+            return rec.timestamp.date().isocalendar()[0:2]  # (year, week)
+        if period == 'monthly':
+            return (rec.timestamp.year, rec.timestamp.month)
+        return rec.timestamp.date()  # Default daily
+
+    for r in qs:
+        key = bucket_key(r)
+        if key not in buckets:
+            buckets[key] = {'gold_lost_kg': 0.0, 'revenue_lost_usd': 0.0}
+
+        buckets[key]['gold_lost_kg'] += r.gold_lost_kg()
+        buckets[key]['revenue_lost_usd'] += r.revenue_lost_usd()
+
+    # ✅ Prepare chart data
+    sorted_items = sorted(buckets.items())
+    labels = []
+    gold = []
+    revenue = []
+
+    for key, vals in sorted_items:
+        if period == 'weekly':
+            year, week = key
+            labels.append(f'{year}-W{week}')
+        elif period == 'monthly':
+            year, month = key
+            labels.append(f'{year}-{month:02d}')
+        else:
+            labels.append(key.isoformat())
+        gold.append(round(vals['gold_lost_kg'], 6))
+        revenue.append(round(vals['revenue_lost_usd'], 2))
+
+    return JsonResponse({
+        'labels': labels,
+        'gold': gold,
+        'revenue': revenue
+    })

@@ -1,0 +1,66 @@
+{% extends 'dashboard/base.html' %}
+{% load static %}
+
+{% block title %}Processing Loss Analysis{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2 class="text-light bg-dark p-3 rounded shadow">⚙️ Processing — Gold & Revenue Loss</h2>
+
+    <!-- Filter Controls -->
+    <div class="row mb-4 mt-3 align-items-end">
+        <div class="col-md-3">
+            <label for="periodSelect" class="form-label">Period</label>
+            <select id="periodSelect" class="form-select">
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="startDate" class="form-label">Start Date</label>
+            <input type="date" id="startDate" class="form-control" />
+        </div>
+        <div class="col-md-3">
+            <label for="endDate" class="form-label">End Date</label>
+            <input type="date" id="endDate" class="form-control" />
+        </div>
+        <div class="col-md-3 d-grid">
+            <button id="loadBtn" class="btn btn-primary">Load Data</button>
+        </div>
+        
+    </div>
+
+    <!-- Chart Area -->
+    <div class="card shadow p-3 bg-dark text-light">
+        <!-- Loading Spinner -->
+        <div id="loadingSpinner" style="display:none; text-align:center;">
+            <p>Loading data...</p>
+        </div>
+
+        <!-- Chart Canvas -->
+        <canvas id="lossChart" height="120"></canvas>
+
+        <!-- Export Button -->
+        <div class="mt-3 text-end">
+            <button id="exportPdfBtn" class="btn btn-outline-light">📄 Export to PDF</button>
+        </div>
+    </div>
+</div>
+
+<!-- Chart.js and Export Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<!-- Custom JS -->
+<script src="{% static 'dashboard/js/processing_loss_chart.js' %}"></script>
+
+<script>
+    // Manual refresh trigger
+    document.getElementById('loadBtn').addEventListener('click', () => {
+        const event = new Event('change');
+        document.getElementById('periodSelect').dispatchEvent(event);
+    });
+</script>
+{% endblock %}

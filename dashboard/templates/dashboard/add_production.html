@@ -63,10 +63,11 @@
             <button type="submit" class="btn btn-primary mt-3">Save</button>
             <a href="{% url 'production-vs-demand' %}" class="btn btn-secondary mt-3">Cancel</a>
         </form>
+<a href="{% url 'production_summary' %}" class="btn btn-info">See Summary of Previous Records</a>
     </div>
 </div>
 
 <!-- Link to external JS file -->
-<script src="{% static 'dashboard/js/production_break_status.js' %}"></script>
+<script src="{% static 'dashboard/js/production_variance.js' %}"></script>
 
 {% endblock %}
