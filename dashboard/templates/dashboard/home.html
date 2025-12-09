@@ -1,161 +1,249 @@
 {% extends 'dashboard/base.html' %}
+{% load static %}
 
 {% block title %}Mine-Plant Coordination Dashboard{% endblock %}
 
 {% block content %}
-<h1>Mine-Plant Coordination Dashboard</h1>
-<p>Welcome! Use this dashboard to monitor mine production, plant demand, ore quality, stockpiles, and phase progress.</p>
-
-<div style="display:flex; flex-wrap:wrap; gap:20px;">
-
-    <!-- Production vs Plant Demand -->
-    <div style="flex:1 1 45%; background:#f8f9fa; padding:15px; border-radius:8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-        <h3>Production vs Plant Demand</h3>
-        <canvas id="prodDemandChart" width="400" height="250"></canvas>
-        <a href="{% url 'production-vs-demand' %}">View Details</a>
+<div class="container-fluid">
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">Mine-Plant Coordination Dashboard</h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+            <div class="btn-group me-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary">Share</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary">Export</button>
+            </div>
+        </div>
     </div>
 
-    <!-- Ore Grade & Tonnage -->
-    <div style="flex:1 1 45%; background:#f8f9fa; padding:15px; border-radius:8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-        <h3>Ore Grade & Tonnage</h3>
-        <canvas id="oreGradeTonnageChart" width="400" height="250"></canvas>
-        <a href="{% url 'ore-grade-tonnage' %}">View Details</a>
-    </div>
+    <p class="lead text-muted">
+        Monitor mine production, plant demand, ore quality, stockpiles, and phase progress in real-time.
+    </p>
 
-    <!-- Stockpile Forecast -->
-    <div style="flex:1 1 45%; background:#f8f9fa; padding:15px; border-radius:8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-        <h3>Stockpile Forecast</h3>
-        <canvas id="stockpileChart" width="400" height="250"></canvas>
-        <a href="{% url 'stockpile-forecast' %}">View Details</a>
-    </div>
+    <div class="row g-4 mb-4">
+        
+        <div class="col-12 col-md-6 col-lg-6">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0 text-primary">Production vs Demand</h5>
+                    <a href="{% url 'production-vs-demand' %}" class="btn btn-sm btn-outline-primary">View Details</a>
+                </div>
+                <div class="card-body">
+                    <canvas id="prodDemandChart"></canvas>
+                </div>
+            </div>
+        </div>
 
-    <!-- Phase Progress -->
-    <div style="flex:1 1 45%; background:#f8f9fa; padding:15px; border-radius:8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-        <h3>Phase Progress</h3>
-        <canvas id="phaseProgressChart" width="400" height="250"></canvas>
-        <a href="{% url 'pit_phase_dashboard' %}">View Details</a>
-    </div>
+        <div class="col-12 col-md-6 col-lg-6">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0 text-primary">Ore Grade & Tonnage</h5>
+                    <a href="{% url 'ore-grade-tonnage' %}" class="btn btn-sm btn-outline-primary">View Details</a>
+                </div>
+                <div class="card-body">
+                    <canvas id="oreGradeTonnageChart"></canvas>
+                </div>
+            </div>
+        </div>
 
+        <div class="col-12 col-md-6 col-lg-6">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0 text-primary">Stockpile Forecast</h5>
+                    <a href="{% url 'stockpile-forecast' %}" class="btn btn-sm btn-outline-primary">View Details</a>
+                </div>
+                <div class="card-body">
+                    <canvas id="stockpileChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-6 col-lg-6">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0 text-primary">Phase Progress</h5>
+                    <a href="{% url 'pit_phase_dashboard' %}" class="btn btn-sm btn-outline-primary">View Details</a>
+                </div>
+                <div class="card-body">
+                    <canvas id="phaseProgressChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+    </div>
 </div>
 
-<!-- Load Chart.js & Luxon -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
 
 <script>
-// Fetch data & render Production vs Demand chart
-async function fetchProdDemand() {
-    const [prodResp, demandResp] = await Promise.all([
-        fetch('/api/production/'),
-        fetch('/api/plantdemand/')
-    ]);
-    const prodData = await prodResp.json();
-    const demandData = await demandResp.json();
+    // Helper to detect if mobile for chart aspect ratio
+    const isMobile = window.innerWidth < 768;
 
-    const labels = prodData.map(d => new Date(d.timestamp).toLocaleDateString());
-    const prodValues = prodData.map(d => d.tonnage);
-    const demandValues = demandData.map(d => d.required_tonnage);
-
-    new Chart(document.getElementById('prodDemandChart'), {
-        type:'line',
-        data: {
-            labels: labels,
-            datasets: [
-                { label:'Production', data:prodValues, borderColor:'blue', fill:false },
-                { label:'Plant Demand', data:demandValues, borderColor:'red', fill:false }
-            ]
-        },
-        options: { responsive:true, scales:{ y:{ beginAtZero:true } } }
-    });
-}
-
-// Fetch Ore Grade & Tonnage chart
-async function fetchOreGradeTonnage() {
-    const [oreResp, prodResp] = await Promise.all([
-        fetch('/api/oresamples/'),
-        fetch('/api/production/')
-    ]);
-    const oreData = await oreResp.json();
-    const prodData = await prodResp.json();
-
-    if(!oreData.length) return;
-
-    const phases = [...new Set(oreData.map(i => i.mine_phase.name))];
-
-    const gradeDatasets = phases.map(phase => ({
-        label: phase+' Grade',
-        data: oreData.filter(i => i.mine_phase.name===phase).map(i=>({x:new Date(i.timestamp), y:i.grade_g_t})),
-        type:'line',
-        yAxisID:'yGrade',
-        borderColor:'#'+Math.floor(Math.random()*16777215).toString(16),
-        fill:false,
-        tension:0.1
-    }));
-
-    const tonnageDataset = {
-        label:'Tonnage',
-        data:prodData.map(i=>({x:new Date(i.timestamp), y:i.tonnage})),
-        type:'bar',
-        yAxisID:'yTonnage',
-        backgroundColor:'rgba(0,123,255,0.5)'
+    // Common Chart Options
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false, // Allows chart to fill the container height
+        plugins: {
+            legend: { position: 'top' }
+        }
     };
 
-    new Chart(document.getElementById('oreGradeTonnageChart').getContext('2d'), {
-        data: { datasets:[...gradeDatasets, tonnageDataset] },
-        options:{
-            responsive:true,
-            parsing:{xAxisKey:'x',yAxisKey:'y'},
-            scales:{
-                x:{ type:'time', time:{ unit:'day' }, title:{display:true,text:'Date'} },
-                yGrade:{ type:'linear', position:'left', title:{display:true,text:'Grade (g/t)'} },
-                yTonnage:{ type:'linear', position:'right', title:{display:true,text:'Tonnage (t)'}, grid:{ drawOnChartArea:false } }
-            }
+    // 1. Fetch Production vs Demand
+    async function fetchProdDemand() {
+        try {
+            const [prodResp, demandResp] = await Promise.all([
+                fetch('/api/production/'),
+                fetch('/api/plantdemand/')
+            ]);
+            const prodData = await prodResp.json();
+            const demandData = await demandResp.json();
+
+            // Check if data exists
+            if (!prodData.length && !demandData.length) return;
+
+            const labels = prodData.map(d => d.timestamp); // Keep ISO string for adapter
+            const prodValues = prodData.map(d => d.tonnage);
+            // Map demand to dates (assuming simple alignment for demo, otherwise needs date matching)
+            const demandValues = demandData.map(d => d.required_tonnage);
+
+            new Chart(document.getElementById('prodDemandChart'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Production', data: prodValues, borderColor: '#0d6efd', backgroundColor: 'rgba(13, 110, 253, 0.1)', fill: true },
+                        { label: 'Plant Demand', data: demandValues, borderColor: '#dc3545', borderDash: [5, 5], fill: false }
+                    ]
+                },
+                options: {
+                    ...commonOptions,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' } },
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("Error loading Production Chart:", error);
         }
+    }
+
+    // 2. Fetch Ore Grade & Tonnage
+    async function fetchOreGradeTonnage() {
+        try {
+            const [oreResp, prodResp] = await Promise.all([
+                fetch('/api/oresamples/'),
+                fetch('/api/production/')
+            ]);
+            const oreData = await oreResp.json();
+            const prodData = await prodResp.json();
+
+            if (!oreData.length) return;
+
+            const phases = [...new Set(oreData.map(i => i.mine_phase.name))];
+
+            const gradeDatasets = phases.map((phase, index) => ({
+                label: phase + ' Grade',
+                data: oreData.filter(i => i.mine_phase.name === phase).map(i => ({ x: i.timestamp, y: i.grade_g_t })),
+                type: 'line',
+                yAxisID: 'yGrade',
+                borderColor: `hsl(${index * 60}, 70%, 50%)`, // Auto color generation
+                tension: 0.3
+            }));
+
+            const tonnageDataset = {
+                label: 'Total Tonnage',
+                data: prodData.map(i => ({ x: i.timestamp, y: i.tonnage })),
+                type: 'bar',
+                yAxisID: 'yTonnage',
+                backgroundColor: 'rgba(13, 110, 253, 0.3)'
+            };
+
+            new Chart(document.getElementById('oreGradeTonnageChart'), {
+                data: { datasets: [...gradeDatasets, tonnageDataset] },
+                options: {
+                    ...commonOptions,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' } },
+                        yGrade: { type: 'linear', position: 'left', title: { display: true, text: 'Grade (g/t)' } },
+                        yTonnage: { type: 'linear', position: 'right', title: { display: true, text: 'Tonnage (t)' }, grid: { drawOnChartArea: false } }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("Error loading Ore Grade Chart:", error);
+        }
+    }
+
+    // 3. Fetch Stockpile Chart
+    async function fetchStockpileChart() {
+        try {
+            const resp = await fetch('/api/stockpiles/');
+            const data = await resp.json();
+            if (!data.length) return;
+            
+            const chartData = data.map(i => ({ x: i.timestamp, y: i.current_tonnage }));
+            
+            new Chart(document.getElementById('stockpileChart'), {
+                type: 'line',
+                data: { datasets: [{ label: 'Stockpile Level', data: chartData, borderColor: '#198754', backgroundColor: 'rgba(25, 135, 84, 0.1)', fill: true, tension: 0.3 }] },
+                options: {
+                    ...commonOptions,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' } },
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("Error loading Stockpile Chart:", error);
+        }
+    }
+
+    // 4. Fetch Phase Progress
+    async function fetchPhaseProgress() {
+        try {
+            const resp = await fetch('/api/phaseschedule/');
+            const data = await resp.json();
+            if (!data.length) return;
+
+            const labels = data.map(i => i.mine_phase.name);
+            const completion = data.map(i => i.current_progress || 0);
+            
+            // Generate colors: Red for low progress, Green for high
+            const bgColors = completion.map(val => val < 50 ? 'rgba(220, 53, 69, 0.7)' : (val < 90 ? 'rgba(255, 193, 7, 0.7)' : 'rgba(25, 135, 84, 0.7)'));
+
+            new Chart(document.getElementById('phaseProgressChart'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Completion (%)', data: completion, backgroundColor: bgColors }
+                    ]
+                },
+                options: {
+                    indexAxis: 'y', // Horizontal Bar Chart
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { max: 100, beginAtZero: true },
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("Error loading Phase Progress:", error);
+        }
+    }
+
+    // Initialize all
+    document.addEventListener('DOMContentLoaded', () => {
+        fetchProdDemand();
+        fetchOreGradeTonnage();
+        fetchStockpileChart();
+        fetchPhaseProgress();
     });
-}
-
-// Fetch Stockpile Chart
-async function fetchStockpileChart() {
-    const resp = await fetch('/api/stockpiles/');
-    const data = await resp.json();
-    if(!data.length) return;
-    const chartData = data.map(i=>({x:i.timestamp,y:i.current_tonnage}));
-    new Chart(document.getElementById('stockpileChart').getContext('2d'), {
-        type:'line',
-        data:{ datasets:[{label:'Stockpile', data:chartData, borderColor:'green', fill:true, tension:0.2}] },
-        options:{ parsing:{xAxisKey:'x',yAxisKey:'y'}, scales:{ x:{type:'time', time:{unit:'day'}}, y:{beginAtZero:true} } }
-    });
-}
-
-// Fetch Phase Progress
-async function fetchPhaseProgress() {
-    const resp = await fetch('/api/phaseschedule/');
-    const data = await resp.json();
-    if(!data.length) return;
-
-    const labels = data.map(i=>i.mine_phase.name);
-    const completion = data.map(i=>i.current_progress||0);
-    const planned = data.map(()=>100);
-
-    new Chart(document.getElementById('phaseProgressChart').getContext('2d'), {
-        type:'bar',
-        data:{
-            labels:labels,
-            datasets:[
-                { label:'Completed (%)', data:completion, backgroundColor:completion.map(p=>p<100?'red':'green') },
-                { label:'Planned (%)', data:planned, backgroundColor:'rgba(200,200,200,0.3)' }
-            ]
-        },
-        options:{ indexAxis:'y', responsive:true, scales:{ x:{ max:100 }, y:{ } } }
-    });
-}
-
-// Load all charts
-fetchProdDemand();
-fetchOreGradeTonnage();
-fetchStockpileChart();
-fetchPhaseProgress();
 </script>
-
 {% endblock %}

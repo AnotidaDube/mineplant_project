@@ -2,21 +2,22 @@
 {% block title %}Ore Grade & Tonnage{% endblock %}
 
 {% block content %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
 <h2 class="bg-dark text-light p-3 rounded shadow">⛏️ Ore Grade & Tonnage Over Time</h2>
 
-<!-- Action Buttons -->
 <div class="mb-3 d-flex gap-2">
     <a href="{% url 'add-oresample' %}" class="btn btn-success">➕ Add Ore Sample</a>
-    <a href="{% url 'export-pdf' %}" class="btn btn-outline-danger">🧾 Export to PDF</a>
+    <button onclick="exportChartToPDF()" class="btn btn-outline-danger">🧾 Export to PDF</button>
     <button id="refreshChartBtn" class="btn btn-outline-primary ms-auto">🔄 Refresh Chart</button>
 </div>
 
-<!-- Chart Canvas -->
 <div class="card shadow p-3">
-    <canvas id="oreGradeTonnageChart" width="900" height="400"></canvas>
+    <div id="chartContainer" style="background-color: white;">
+        <canvas id="oreGradeTonnageChart" width="900" height="400"></canvas>
+    </div>
 </div>
 
-<!-- Chart.js + Luxon adapter -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
@@ -70,13 +71,13 @@ async function fetchOreAndProductionData() {
             data: oreData.map(item => ({ x: item.timestamp, y: item.actual_tonnage })),
             type: 'line',
             yAxisID: 'yTonnage',
-            borderColor: 'rgba(255, 99, 132, 1)',         // Bright pink-red line
-            backgroundColor: 'rgba(255, 99, 132, 0.2)',   // Soft fill under line (optional)
-            borderWidth: 3,                               // Thicker line
-            pointRadius: 4,                               // Larger data points
-            pointBackgroundColor: 'rgba(255, 99, 132, 1)',// Matching point color
-            tension: 0.3,                                 // Smooth curve
-            fill: false                                   // No area fill
+            borderColor: 'rgba(255, 99, 132, 1)',
+            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+            borderWidth: 3,
+            pointRadius: 4,
+            pointBackgroundColor: 'rgba(255, 99, 132, 1)',
+            tension: 0.3,
+            fill: false
         });
 
         // Expected Tonnage
@@ -134,6 +135,30 @@ async function fetchOreAndProductionData() {
 
 function randomColor() {
     return '#' + Math.floor(Math.random() * 16777215).toString(16);
+}
+
+// --- New Function: Export Chart to PDF ---
+function exportChartToPDF() {
+    const { jsPDF } = window.jspdf;
+    const canvas = document.getElementById('oreGradeTonnageChart');
+    
+    // Create image from canvas
+    const chartImage = canvas.toDataURL('image/png', 1.0);
+    
+    // Create PDF (Landscape orientation usually fits charts better)
+    const pdf = new jsPDF('landscape');
+    
+    pdf.setFontSize(20);
+    pdf.text("Ore Grade & Tonnage Report", 15, 15);
+    
+    pdf.setFontSize(10);
+    pdf.text(`Generated on: ${new Date().toLocaleString()}`, 15, 22);
+
+    // Add Image (x, y, width, height)
+    // Adjust dimensions as needed for your specific layout
+    pdf.addImage(chartImage, 'PNG', 10, 30, 280, 150);
+    
+    pdf.save('Ore_Grade_Tonnage_Report.pdf');
 }
 
 document.getElementById('refreshChartBtn').addEventListener('click', () => {

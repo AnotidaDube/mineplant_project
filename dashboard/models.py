@@ -111,6 +111,7 @@ class PlantDemand(models.Model):
 
 
 
+
 class ProductionRecord(models.Model):
     """Tracks production tonnage, grade, and economic impact for each phase and plant."""
     
@@ -187,12 +188,18 @@ class ProductionRecord(models.Model):
         return getattr(settings, 'DEFAULT_GOLD_PRICE_PER_KG', None)
 
     def gold_lost_kg(self):
-        """Calculate gold lost (in kg) when underbreak occurs."""
+        """Calculate gold lost (in kg) when underbreak occurs in ORE."""
+        # 1. Safety Check: If this is Waste, we don't lose gold revenue
+        if self.material_type != 'ore':
+            return 0.0
+
+        # 2. Safety Check: Only calculate if we are truly under target
         if not self.is_underbreak():
             return 0.0
 
         grade = self._effective_grade()
         recovery = self._effective_recovery()
+        
         if grade is None or recovery is None:
             return 0.0
 
@@ -205,6 +212,7 @@ class ProductionRecord(models.Model):
         gold_kg = self.gold_lost_kg()
         if gold_kg <= 0:
             return 0.0
+        
         price = self._effective_gold_price()
         if price is None:
             return 0.0
@@ -212,7 +220,6 @@ class ProductionRecord(models.Model):
 
     def __str__(self):
         return f"{self.mine_phase} → {self.plant or 'No Plant'} ({self.tonnage}t)"
-
 
 class Stockpile(models.Model):
     """Tracks ore stockpiles ready for plant feed."""

@@ -9,7 +9,7 @@
     <div class="card bg-dark text-light p-3 mb-4 shadow">
         <h5>Progress Map</h5>
         {% if pit_map_img %}
-            <img src="data:image/png;base64,{{ pit_map_img }}" class="img-fluid rounded shadow" alt="Progress Map">
+             <img src="data:image/png;base64,{{ pit_map_img }}" alt="Pit Map">
         {% elif error %}
             <p class="text-danger">{{ error }}</p>
         {% else %}

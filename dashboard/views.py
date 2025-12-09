@@ -1,23 +1,53 @@
 import base64
-from io import BytesIO
-import os
 import json
-from django.views.decorators.csrf import csrf_exempt
-from reportlab.pdfgen import canvas
-from django.http import JsonResponse
-from django.http import JsonResponse, HttpResponseNotAllowed, HttpResponse
+import os
+import io
+from io import BytesIO
+from datetime import date
+
+import matplotlib
+# Set backend to 'Agg' before importing pyplot to avoid GUI errors on server
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
+
+from PIL import Image, ImageDraw
+
+from django.shortcuts import render, redirect, get_object_or_404
+from django.http import JsonResponse, HttpResponse, HttpResponseNotAllowed
 from django.db.models import Sum
+from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.timezone import make_aware
+
+# ReportLab imports for Server-Side PDF generation
+from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.pagesizes import A4, letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
-from dashboard.utils.str_parser import parse_str_file
-from django.conf import settings
-from PIL import Image, ImageDraw
-from django.shortcuts import render, redirect
-from .forms import ProductionRecordForm, OreSampleForm, PlantDemandForm, StockpileForm, PhaseScheduleForm, ExpectedValuesForm
+
+# DRF Imports
 from rest_framework import generics
-from .models import MinePhase, ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule, Plant
+
+# Local Imports
+from dashboard.utils.str_parser import parse_str_file
+from .forms import (
+    ProductionRecordForm, 
+    OreSampleForm, 
+    PlantDemandForm, 
+    StockpileForm, 
+    PhaseScheduleForm, 
+    ExpectedValuesForm
+)
+from .models import (
+    MinePhase, 
+    ProductionRecord, 
+    OreSample, 
+    PlantDemand, 
+    Stockpile, 
+    PhaseSchedule, 
+    Plant
+)
 from .serializers import (
     MinePhaseSerializer,
     ProductionRecordSerializer,
@@ -26,53 +56,64 @@ from .serializers import (
     StockpileSerializer,
     PhaseScheduleSerializer
 )
-from matplotlib import pyplot as plt
-from django.utils.timezone import make_aware
-from datetime import date
 
+# ==========================================
+# API Views (Django Rest Framework)
+# ==========================================
 
-
-# List of APIs
 class MinePhaseList(generics.ListAPIView):
     queryset = MinePhase.objects.all()
     serializer_class = MinePhaseSerializer
-
 
 class ProductionRecordList(generics.ListAPIView):
     queryset = ProductionRecord.objects.all()
     serializer_class = ProductionRecordSerializer
 
-
 class OreSampleList(generics.ListAPIView):
     queryset = OreSample.objects.all()
     serializer_class = OreSampleSerializer
-
 
 class PlantDemandList(generics.ListAPIView):
     queryset = PlantDemand.objects.all()
     serializer_class = PlantDemandSerializer
 
-
 class StockpileList(generics.ListAPIView):
     queryset = Stockpile.objects.all()
     serializer_class = StockpileSerializer
-
 
 class PhaseScheduleList(generics.ListAPIView):
     queryset = PhaseSchedule.objects.all()
     serializer_class = PhaseScheduleSerializer
 
 
+# ==========================================
+# Dashboard Views
+# ==========================================
+
+def mine_plant_dashboard(request):
+    """
+    Renders the main dashboard home page linking all sections.
+    """
+    return render(request, 'dashboard/home.html')
+
+
 def production_vs_demand_view(request):
-    """ If it's a data fetch request, return API response (charts use this soon) """
+    """
+    View for the Production vs Demand dashboard.
+    Handles both initial HTML render and AJAX data fetching.
+    """
+    # 1. AJAX Data Fetch for Charts
     if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        prod_data = list(ProductionRecord.objects.values('timestamp', 'tonnage', 'material_type', 'plant__name'))
+        demand_data = list(PlantDemand.objects.values('timestamp', 'required_tonnage', 'plant__name'))
+        
         data = {
-            "production": list(ProductionRecord.objects.values()),
-            "demand": list(PlantDemand.objects.values())
+            "production": prod_data,
+            "demand": demand_data
         }
         return JsonResponse(data, safe=False)
 
-    """ Dashboard context (optional initial stats)"""
+    # 2. Standard Page Load
     context = {
         "page_title": "Production vs Demand Dashboard",
         "total_production": ProductionRecord.objects.aggregate(Sum('tonnage'))['tonnage__sum'] or 0,
@@ -83,12 +124,16 @@ def production_vs_demand_view(request):
 
 
 def ore_grade_tonnage_view(request):
+    """
+    View for Ore Grade & Tonnage analysis.
+    Prepares data for Chart.js and tabular display.
+    """
     phases = MinePhase.objects.all()
 
     phase_data = []
     for phase in phases:
         phase_data.append({
-            'id': phase.id,  # ✅ Include ID here
+            'id': phase.id,
             'name': phase.name,
             'pit': phase.pit,
             'expected_grade': phase.expected_grade or 0,
@@ -99,7 +144,6 @@ def ore_grade_tonnage_view(request):
             'variance_tonnage': phase.variance_tonnage(),
         })
 
-    # Provide JSON-stringified data for Chart.js & JS consumption
     context = {
         'phase_data': phase_data,
         'phase_data_json': json.dumps(phase_data),
@@ -107,8 +151,10 @@ def ore_grade_tonnage_view(request):
     return render(request, 'dashboard/ore_grade_tonnage.html', context)
 
 
-
 def stockpile_forecast_view(request):
+    """
+    View for Stockpile levels and variance.
+    """
     stockpiles = Stockpile.objects.all().order_by('name')
 
     stockpile_data = []
@@ -133,31 +179,54 @@ def stockpile_forecast_view(request):
     return render(request, 'dashboard/stockpile_forecast.html', context)
 
 
+# ==========================================
+# Pit & Phase Visualization Views
+# ==========================================
+
+def generate_pit_map_base64(parsed_phases):
+    """Helper to generate a base64 encoded matplotlib image of the pit."""
+    if not parsed_phases:
+        return None
+        
+    plt.figure(figsize=(10, 8))
+    for name, coords in parsed_phases.items():
+        xs, ys, zs = zip(*coords)
+        plt.scatter(xs, ys, s=6, label=name)
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.title('Pit STR Progress Map')
+    plt.legend(fontsize=8)
+    plt.axis('equal')
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    buf.close()
+    plt.close()
+    return img_base64
+
+
 def phase_progress_view(request):
+    """
+    Combines Schedule data with Pit Design map.
+    """
     phases = PhaseSchedule.objects.select_related('mine_phase').all().order_by('mine_phase__sequence_order')
 
-    """ Auto-refresh tonnage values """
+    # Update dynamic fields
     for p in phases:
         p.update_removed_tonnage()
 
-    """ Filter by status """
     active_phases = phases.filter(status='active')
     completed_phases = phases.filter(status='completed')
 
-    # Chart data
+    # Chart Data Preparation
     phase_names = [p.mine_phase.name for p in phases]
     planned_tonnage = [p.planned_tonnage for p in phases]
     removed_tonnage = [p.removed_tonnage for p in phases]
     progress_percentages = [p.current_progress for p in phases]
 
-    # Variance calculations
-    variance = [(removed - planned) for removed, planned in zip(removed_tonnage, planned_tonnage)]
-    variance_percent = [
-        ((removed - planned) / planned) * 100 if planned else None
-        for removed, planned in zip(removed_tonnage, planned_tonnage)
-    ]
-
-    # Combine variance data for table rendering
+    # Variance Data for Table
     variance_data = []
     for p in phases:
         planned = p.planned_tonnage
@@ -173,7 +242,7 @@ def phase_progress_view(request):
             'variance_percent': round(var_pct, 2) if var_pct is not None else None,
         })
 
-    # Ore and waste movement per phase
+    # Movement Data
     ore_movement = []
     waste_movement = []
     for p in phases:
@@ -182,6 +251,17 @@ def phase_progress_view(request):
         waste = records.filter(material_type='waste').aggregate(Sum('tonnage'))['tonnage__sum'] or 0
         ore_movement.append(round(ore, 2))
         waste_movement.append(round(waste, 2))
+
+    # Pit Map Generation
+    str_file = os.path.join(settings.BASE_DIR, 'dashboard', 'static', 'data', 'pit_design.str')
+    # Fallback path if using standard static layout
+    if not os.path.exists(str_file):
+        str_file = os.path.join(os.path.dirname(__file__), 'static', 'data', 'pit_design.str')
+
+    pit_map_img = None
+    if os.path.exists(str_file):
+        parsed_phases = parse_str_file(str_file)
+        pit_map_img = generate_pit_map_base64(parsed_phases)
 
     context = {
         "phases": phases,
@@ -193,129 +273,33 @@ def phase_progress_view(request):
         "progress_percentages": progress_percentages,
         "ore_movement": ore_movement,
         "waste_movement": waste_movement,
-        "variance": variance,
-        "variance_percent": variance_percent,
         "variance_data": variance_data,
+        "pit_map_img": pit_map_img,
     }
 
     return render(request, 'dashboard/phase_progress.html', context)
 
 
-def mine_plant_dashboard(request):
-    """
-    Renders the main dashboard home page linking all sections.
-    """
-    return render(request, 'dashboard/home.html')
-
-
-
-def add_stockpile(request):
-    """ -In this view we Add Stockpile"""
-    if request.method == 'POST':
-        form = StockpileForm(request.POST)
-        if form.is_valid():
-            form.save()
-            return redirect('stockpile-forecast')  # goes to stockpile dashboard
-    else:
-        form = StockpileForm()
-    return render(request, 'dashboard/add_stockpile.html', {'form': form})
-
-
-def add_production(request):
-    """--- Add Production ---"""
-    if request.method == 'POST':
-        form = ProductionRecordForm(request.POST)
-        if form.is_valid():
-            form.save()
-            return redirect('production-vs-demand')  # goes to production vs demand dashboard
-    else:
-        form = ProductionRecordForm()
-    return render(request, 'dashboard/add_production.html', {
-        'form': form,
-        'plants': Plant.objects.all()
-    })
-
-def add_oresample(request):
-    """ --- Add Ore Sample ---"""
-    if request.method == 'POST':
-        form = OreSampleForm(request.POST)
-        if form.is_valid():
-            form.save()
-            return redirect('ore-grade-tonnage')
-    else:
-        form = OreSampleForm()
-
-    samples = OreSample.objects.order_by('timestamp')
-    return render(request, 'dashboard/add_oresample.html', {
-        'form': form,
-        'samples': samples
-    })
-
-
-def add_plantdemand(request):
-    """ --- Add Plant Demand ---"""
-    if request.method == 'POST':
-        form = PlantDemandForm(request.POST)
-        if form.is_valid():
-            form.save()
-            return redirect('production-vs-demand')  # goes to production vs demand dashboard
-    else:
-        form = PlantDemandForm()
-    return render(request, 'dashboard/add_plantdemand.html', {'form': form})
-
-# --- Add Phase Schedule ---
-def add_phaseschedule(request):
-    if request.method == 'POST':
-        form = PhaseScheduleForm(request.POST)
-        if form.is_valid():
-            form.save()
-            return redirect('pit_phase_dashboard')  # goes to phase progress dashboard
-    else:
-        form = PhaseScheduleForm()
-    return render(request, 'dashboard/add_phaseschedule.html', {'form': form})
-
-
-def welcome_dashboard(request):
-    return render(request, 'dashboard/home_dashboard.html')
-
 def pit_map_view(request):
-    """ Path to STR file (adjust if yours has a different name) """
-    str_file = os.path.join(
-        os.path.dirname(__file__),
-        'static', 'data', 'pit_design.str'
-    )
+    """
+    Standalone view to preview the Pit STR file.
+    """
+    str_file = os.path.join(os.path.dirname(__file__), 'static', 'data', 'pit_design.str')
 
     if not os.path.exists(str_file):
         return render(request, 'dashboard/pit_preview.html', {
             'error': f'STR file not found at {str_file}'
         })
 
-    # Parse the STR file
     phases = parse_str_file(str_file)
     if not phases:
         return render(request, 'dashboard/pit_preview.html', {
             'error': 'Failed to read coordinates from STR file.'
         })
 
-    # Plot pit map
-    plt.figure(figsize=(10, 8))
-    for name, coords in phases.items():
-        xs, ys, zs = zip(*coords)
-        plt.scatter(xs, ys, s=6, label=name)
-    plt.xlabel('X')
-    plt.ylabel('Y')
-    plt.title('Pit STR Progress Map')
-    plt.legend(fontsize=8)
-    plt.axis('equal')
+    pit_map_img = generate_pit_map_base64(phases)
 
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    pit_map_img = base64.b64encode(buf.read()).decode('utf-8')
-    buf.close()
-    plt.close()
-
-    # Example data for the charts
+    # Mock Data for preview visualization
     phase_names = list(phases.keys())
     progress_percent = [50] * len(phase_names)
     planned_tonnage = [1000] * len(phase_names)
@@ -332,16 +316,15 @@ def pit_map_view(request):
     return render(request, 'dashboard/pit_preview.html', context)
 
 
-
-
 def pit_phase_dashboard(request):
-    # Get all phases ordered by sequence
+    """
+    Detailed dashboard for Pit Phases.
+    """
     phases = PhaseSchedule.objects.select_related('mine_phase').all().order_by('mine_phase__sequence_order')
 
     phase_names = [p.mine_phase.name for p in phases]
     progress_percentages = [round(p.current_progress, 2) for p in phases]
 
-    # Prepare Planned vs Actual data
     planned_tonnage = []
     actual_ore = []
     actual_waste = []
@@ -357,9 +340,8 @@ def pit_phase_dashboard(request):
 
         actual_ore.append(round(ore, 2))
         actual_waste.append(round(waste, 2))
-        variance_total.append(round((ore + waste) - planned, 2))  # Overbreak / Underbreak
+        variance_total.append(round((ore + waste) - planned, 2))
 
-    # KPI Totals
     total_planned = sum(planned_tonnage)
     total_actual = sum(actual_ore) + sum(actual_waste)
     total_variance = total_actual - total_planned
@@ -378,16 +360,183 @@ def pit_phase_dashboard(request):
     }
     return render(request, "dashboard/pit_phase_dashboard.html", context)
 
+
+def pit_data(request):
+    """API endpoint to return raw Pit Data JSON."""
+    file_path = os.path.join(os.path.dirname(__file__), "static", "data", "pit.str")
+    if os.path.exists(file_path):
+        phases = parse_str_file(file_path)
+        return JsonResponse(phases)
+    return JsonResponse({"error": "File not found"}, status=404)
+
+
+# ==========================================
+# Processing & Loss Views
+# ==========================================
+
+def processing_loss_dashboard(request):
+    """Renders the Processing Loss Analysis page."""
+    return render(request, 'dashboard/processing_loss_analysis.html')
+
+
+def processing_loss_data(request):
+    """
+    API endpoint that aggregates production loss data by daily/weekly/monthly buckets.
+    Used by Chart.js in the frontend.
+    """
+    period = request.GET.get('period', 'daily')
+    start = request.GET.get('start')
+    end = request.GET.get('end')
+
+    qs = ProductionRecord.objects.all()
+
+    # Date Filtering
+    if start:
+        try:
+            start_date = date.fromisoformat(start)
+            qs = qs.filter(timestamp__date__gte=start_date)
+        except ValueError:
+            pass # Ignore invalid dates
+            
+    if end:
+        try:
+            end_date = date.fromisoformat(end)
+            qs = qs.filter(timestamp__date__lte=end_date)
+        except ValueError:  # <--- FIXED: Added missing except block here
+            pass
+
+    # Filter for underbreak records only
+    relevant_records = [r for r in qs if r.is_underbreak()]
+
+    buckets = {}
+
+    def bucket_key(rec):
+        if period == 'weekly':
+            # returns (iso_year, iso_week)
+            return rec.timestamp.date().isocalendar()[0:2]
+        if period == 'monthly':
+            return (rec.timestamp.year, rec.timestamp.month)
+        return rec.timestamp.date()
+
+    for r in relevant_records:
+        key = bucket_key(r)
+        if key not in buckets:
+            buckets[key] = {'gold_lost_kg': 0.0, 'revenue_lost_usd': 0.0}
+
+        # The model handles the logic: if material_type == 'waste', returns 0
+        buckets[key]['gold_lost_kg'] += r.gold_lost_kg()
+        buckets[key]['revenue_lost_usd'] += r.revenue_lost_usd()
+
+    # Sort and Format for Chart.js
+    sorted_items = sorted(buckets.items())
+    labels = []
+    gold = []
+    revenue = []
+
+    for key, vals in sorted_items:
+        if period == 'weekly':
+            year, week = key
+            labels.append(f'{year}-W{week}')
+        elif period == 'monthly':
+            year, month = key
+            labels.append(f'{year}-{month:02d}')
+        else:
+            labels.append(key.isoformat())
+            
+        gold.append(round(vals['gold_lost_kg'], 6))
+        revenue.append(round(vals['revenue_lost_usd'], 2))
+
+    return JsonResponse({
+        'labels': labels,
+        'gold': gold,
+        'revenue': revenue
+    })
+
+
+def production_summary(request):
+    records = ProductionRecord.objects.order_by('-timestamp')[:20]
+    return render(request, 'dashboard/production_summary.html', {'records': records})
+
+
+# ==========================================
+# Forms / Data Entry Views
+# ==========================================
+
+def add_stockpile(request):
+    if request.method == 'POST':
+        form = StockpileForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('stockpile-forecast')
+    else:
+        form = StockpileForm()
+    return render(request, 'dashboard/add_stockpile.html', {'form': form})
+
+
+def add_production(request):
+    if request.method == 'POST':
+        form = ProductionRecordForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('production-vs-demand')
+    else:
+        form = ProductionRecordForm()
+    return render(request, 'dashboard/add_production.html', {
+        'form': form,
+        'plants': Plant.objects.all()
+    })
+
+
+def add_oresample(request):
+    if request.method == 'POST':
+        form = OreSampleForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('ore-grade-tonnage')
+    else:
+        form = OreSampleForm()
+
+    samples = OreSample.objects.order_by('timestamp')
+    return render(request, 'dashboard/add_oresample.html', {
+        'form': form,
+        'samples': samples
+    })
+
+
+def add_plantdemand(request):
+    if request.method == 'POST':
+        form = PlantDemandForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('production-vs-demand')
+    else:
+        form = PlantDemandForm()
+    return render(request, 'dashboard/add_plantdemand.html', {'form': form})
+
+
+def add_phaseschedule(request):
+    if request.method == 'POST':
+        form = PhaseScheduleForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('pit_phase_dashboard')
+    else:
+        form = PhaseScheduleForm()
+    return render(request, 'dashboard/add_phaseschedule.html', {'form': form})
+
+
 @csrf_exempt
 def update_expected_values(request, phase_id):
-    """AJAX endpoint for inline editing of expected grade/tonnage."""
+    """
+    AJAX endpoint for inline editing of expected grade/tonnage on dashboards.
+    """
     if request.method == "POST":
         try:
             data = json.loads(request.body)
             field = data.get("field")
             value = data.get("value")
 
-            phase = MinePhase.objects.get(id=phase_id)
+            phase = get_object_or_404(MinePhase, id=phase_id)
 
             if field not in ["expected_grade", "expected_tonnage"]:
                 return JsonResponse({"success": False, "error": "Invalid field"}, status=400)
@@ -403,15 +552,21 @@ def update_expected_values(request, phase_id):
 
             return JsonResponse({"success": True, "message": f"{field.replace('_',' ').title()} updated successfully."})
 
-        except MinePhase.DoesNotExist:
-            return JsonResponse({"success": False, "error": "Phase not found"}, status=404)
         except Exception as e:
             return JsonResponse({"success": False, "error": str(e)}, status=500)
 
     return JsonResponse({"success": False, "error": "Invalid request method"}, status=405)
 
 
+# ==========================================
+# Export Views (Server Side)
+# ==========================================
+
 def export_pdf(request):
+    """
+    Generates a PDF report for Ore Grade using ReportLab (Server-Side).
+    This serves as a backup to the JS Client-Side generation.
+    """
     response = HttpResponse(content_type='application/pdf')
     response['Content-Disposition'] = 'attachment; filename="ore_grade_tonnage.pdf"'
 
@@ -443,71 +598,5 @@ def export_pdf(request):
     return response
 
 
-def production_summary(request):
-    records = ProductionRecord.objects.order_by('-timestamp')[:20]  # last 20 records
-    return render(request, 'dashboard/production_summary.html', {'records': records})
-
-
-#adding these views for experimental puropses and later integration
-def processing_loss_dashboard(request):
-    # Main page; charts fetch data via AJAX from `processing_loss_data`
-    return render(request, 'dashboard/processing_loss_analysis.html')
-
-def processing_loss_data(request):
-    period = request.GET.get('period', 'daily')
-    start = request.GET.get('start')
-    end = request.GET.get('end')
-
-    qs = ProductionRecord.objects.all()
-
-    # ✅ Match date-only input from frontend
-    if start:
-        start_date = date.fromisoformat(start)
-        qs = qs.filter(timestamp__date__gte=start_date)
-    if end:
-        end_date = date.fromisoformat(end)
-        qs = qs.filter(timestamp__date__lte=end_date)
-
-    qs = [r for r in qs if r.is_underbreak()]
-
-    # ✅ Aggregate into buckets
-    buckets = {}
-
-    def bucket_key(rec):
-        if period == 'weekly':
-            return rec.timestamp.date().isocalendar()[0:2]  # (year, week)
-        if period == 'monthly':
-            return (rec.timestamp.year, rec.timestamp.month)
-        return rec.timestamp.date()  # Default daily
-
-    for r in qs:
-        key = bucket_key(r)
-        if key not in buckets:
-            buckets[key] = {'gold_lost_kg': 0.0, 'revenue_lost_usd': 0.0}
-
-        buckets[key]['gold_lost_kg'] += r.gold_lost_kg()
-        buckets[key]['revenue_lost_usd'] += r.revenue_lost_usd()
-
-    # ✅ Prepare chart data
-    sorted_items = sorted(buckets.items())
-    labels = []
-    gold = []
-    revenue = []
-
-    for key, vals in sorted_items:
-        if period == 'weekly':
-            year, week = key
-            labels.append(f'{year}-W{week}')
-        elif period == 'monthly':
-            year, month = key
-            labels.append(f'{year}-{month:02d}')
-        else:
-            labels.append(key.isoformat())
-        gold.append(round(vals['gold_lost_kg'], 6))
-        revenue.append(round(vals['revenue_lost_usd'], 2))
-
-    return JsonResponse({
-        'labels': labels,
-        'gold': gold,
-        'revenue': revenue
-    })
+def welcome_dashboard(request):
+    return render(request, 'dashboard/home_dashboard.html')

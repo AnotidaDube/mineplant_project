@@ -7,7 +7,6 @@
 <div class="container mt-4">
     <h2 class="text-light bg-dark p-3 rounded shadow">⚙️ Processing — Gold & Revenue Loss</h2>
 
-    <!-- Filter Controls -->
     <div class="row mb-4 mt-3 align-items-end">
         <div class="col-md-3">
             <label for="periodSelect" class="form-label">Period</label>
@@ -28,32 +27,29 @@
         <div class="col-md-3 d-grid">
             <button id="loadBtn" class="btn btn-primary">Load Data</button>
         </div>
-        
     </div>
 
-    <!-- Chart Area -->
-    <div class="card shadow p-3 bg-dark text-light">
-        <!-- Loading Spinner -->
+    <div id="chartCard" class="card shadow p-3 bg-dark text-light">
         <div id="loadingSpinner" style="display:none; text-align:center;">
             <p>Loading data...</p>
         </div>
 
-        <!-- Chart Canvas -->
-        <canvas id="lossChart" height="120"></canvas>
+        <div class="position-relative">
+            <canvas id="lossChart" height="120"></canvas>
+        </div>
 
-        <!-- Export Button -->
-        <div class="mt-3 text-end">
-            <button id="exportPdfBtn" class="btn btn-outline-light">📄 Export to PDF</button>
+        <div class="mt-3 text-end" data-html2canvas-ignore="true">
+            <button id="exportPdfBtn" class="btn btn-outline-danger">
+                📄 Export to PDF
+            </button>
         </div>
     </div>
 </div>
 
-<!-- Chart.js and Export Libraries -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
-<!-- Custom JS -->
 <script src="{% static 'dashboard/js/processing_loss_chart.js' %}"></script>
 
 <script>
@@ -61,6 +57,70 @@
     document.getElementById('loadBtn').addEventListener('click', () => {
         const event = new Event('change');
         document.getElementById('periodSelect').dispatchEvent(event);
+    });
+
+    // --- Export to PDF Logic ---
+    document.getElementById('exportPdfBtn').addEventListener('click', async () => {
+        const { jsPDF } = window.jspdf;
+        const btn = document.getElementById('exportPdfBtn');
+
+        // Visual feedback
+        const originalText = btn.innerText;
+        btn.innerText = "Generating PDF...";
+        btn.disabled = true;
+
+        try {
+            // Select the card element containing the chart
+            const element = document.getElementById('chartCard');
+
+            // Use html2canvas to take a screenshot of the card
+            // scale: 2 ensures high resolution
+            const canvas = await html2canvas(element, {
+                scale: 2,
+                backgroundColor: '#212529', // Force dark background color matching Bootstrap
+                useCORS: true,
+                logging: false
+            });
+
+            const imgData = canvas.toDataURL('image/png');
+            
+            // Create PDF (Landscape orientation is better for wide charts)
+            const pdf = new jsPDF('l', 'mm', 'a4');
+            const pageWidth = pdf.internal.pageSize.getWidth();
+            const pageHeight = pdf.internal.pageSize.getHeight();
+
+            // Calculate dimensions to fit the page while maintaining aspect ratio
+            const imgProps = pdf.getImageProperties(imgData);
+            const imgHeight = (imgProps.height * pageWidth) / imgProps.width;
+
+            // Add Header Text
+            pdf.setFontSize(18);
+            pdf.text("Processing - Gold & Revenue Loss Report", 10, 15);
+            
+            pdf.setFontSize(10);
+            const dateStr = new Date().toLocaleString();
+            pdf.text(`Generated: ${dateStr}`, 10, 22);
+
+            // Add the Chart Screenshot
+            // If the image is taller than the page, we might need to scale it down further,
+            // but for a single chart card, fitting to width is usually sufficient.
+            let finalHeight = imgHeight;
+            if (finalHeight > (pageHeight - 30)) {
+                finalHeight = pageHeight - 40;
+            }
+            
+            pdf.addImage(imgData, 'PNG', 0, 30, pageWidth, finalHeight);
+
+            pdf.save(`processing_loss_report_${new Date().toISOString().slice(0,10)}.pdf`);
+
+        } catch (error) {
+            console.error("PDF Generation Error:", error);
+            alert("Failed to generate PDF. Please check console for details.");
+        } finally {
+            // Restore button state
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
     });
 </script>
 {% endblock %}

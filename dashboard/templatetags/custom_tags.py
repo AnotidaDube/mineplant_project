@@ -3,9 +3,12 @@ from django import template
 register = template.Library()
 
 @register.filter
-def zip_list(a, b):
-    """Zip two lists together for template iteration"""
+def index(sequence, position):
+    """
+    Returns the item at the given position from a list/tuple.
+    Usage: {{ mylist|index:forloop.counter0 }}
+    """
     try:
-        return zip(a, b)
-    except Exception:
-        return []
+        return sequence[position]
+    except (IndexError, TypeError):
+        return None

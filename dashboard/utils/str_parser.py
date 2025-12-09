@@ -1,36 +1,30 @@
+import re
+from collections import defaultdict
+
 def parse_str_file(file_path):
     """
-    Parse a Surpac .STR file to extract phase coordinates.
-    Returns a dict like {phase_id: [(x, y, z), ...]}.
+    Parse your STR file format:
+    phase_id, x, y, z
+    Returns dict: {phase_id: [(x, y, z), ...]}
     """
-    phases = {}
-    current_phase = None
-    points = []
+    phases = defaultdict(list)
 
     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
         for line in f:
             line = line.strip()
-            if not line:
+            if not line or line.lower().startswith('novmuck') or line.lower().startswith('ssi_styles'):
                 continue
 
-            # New phase block
-            if line.startswith("NAME"):
-                if current_phase and points:
-                    phases[current_phase] = points
-                current_phase = line.split("NAME")[-1].strip().strip('"').strip("'")
-                points = []
-            else:
-                # Parse coordinate line
-                parts = line.replace(",", " ").split()
+            # Split by comma or space
+            parts = re.split(r'[\s,]+', line)
+            if len(parts) >= 4:
                 try:
-                    if len(parts) >= 3:
-                        x, y, z = map(float, parts[:3])
-                        points.append((x, y, z))
+                    phase_id = parts[0]
+                    x = float(parts[1])
+                    y = float(parts[2])
+                    z = float(parts[3])
+                    phases[phase_id].append((x, y, z))
                 except ValueError:
                     continue
 
-    # Save last phase
-    if current_phase and points:
-        phases[current_phase] = points
-
-    return phases
+    return dict(phases)

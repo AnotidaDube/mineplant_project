@@ -1,0 +1,21 @@
+.new-responsive {
+  width: 100%;
+  max-width: 500px; 
+}
+
+@media (min-width: 768px) {
+  .column {
+    width: 48%;
+    float: left;
+    margin-right: 2%;
+  }
+  
+  .column:last-child {
+    margin-right: 0;
+  }
+}
+
+img, video, iframe {
+  max-width: 100%;
+  height: auto;
+}
