@@ -1,0 +1,42 @@
+<nav class="nav flex-column">
+            
+    <div class="sidebar-heading">Operations</div>
+    
+    <a class="nav-link {% if request.resolver_match.url_name == 'home_dashboard' %}active{% endif %}" href="{% url 'home_dashboard' %}">
+        <i class="fas fa-tachometer-alt"></i> Home
+    </a>
+    <a class="nav-link {% if request.resolver_match.url_name == 'production-vs-demand' %}active{% endif %}" href="{% url 'production-vs-demand' %}">
+        <i class="fas fa-chart-line"></i> Prod vs Demand
+    </a>
+    <a class="nav-link {% if request.resolver_match.url_name == 'ore-grade-tonnage' %}active{% endif %}" href="{% url 'ore-grade-tonnage' %}">
+        <i class="fas fa-gem"></i> Ore Grade
+    </a>
+    <a class="nav-link {% if request.resolver_match.url_name == 'stockpile-forecast' %}active{% endif %}" href="{% url 'stockpile-forecast' %}">
+        <i class="fas fa-layer-group"></i> Stockpiles
+    </a>
+    <a class="nav-link {% if request.resolver_match.url_name == 'mass_analysis' %}active{% endif %}" href="{% url 'mass_analysis' %}">
+        <i class="fas fa-weight-hanging"></i> Mass Analysis
+    </a>
+    <a class="nav-link {% if request.resolver_match.url_name == 'processing-loss-dashboard' %}active{% endif %}" href="{% url 'processing-loss-dashboard' %}">
+        <i class="fas fa-exclamation-triangle"></i> Processing Loss
+    </a>
+
+    <div class="sidebar-heading">Strategic Planning</div>
+
+    <a class="nav-link {% if request.resolver_match.url_name == 'upload_schedule' %}active{% endif %}" href="{% url 'upload_schedule' %}">
+        <i class="fas fa-file-upload"></i> Upload Plan
+    </a>
+    <a class="nav-link {% if request.resolver_match.url_name == 'schedule_dashboard' %}active{% endif %}" href="{% url 'schedule_dashboard' %}">
+        <i class="fas fa-calendar-alt"></i> Production Schedule
+    </a>
+    <a class="nav-link {% if request.resolver_match.url_name == 'reconciliation' %}active{% endif %}" href="{% url 'reconciliation' %}">
+        <i class="fas fa-balance-scale"></i> Reconciliation
+    </a>
+
+    <div class="sidebar-heading">Visuals</div>
+
+    <a class="nav-link {% if request.resolver_match.url_name == 'pit_phase_dashboard' %}active{% endif %}" href="{% url 'pit_phase_dashboard' %}">
+        <i class="fas fa-map"></i> Pit Progress
+    </a>
+
+</nav>

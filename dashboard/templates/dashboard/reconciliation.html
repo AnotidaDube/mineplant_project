@@ -1,0 +1,90 @@
+{% extends 'dashboard/base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="text-white mb-0">⚖️ Reconciliation Report</h2>
+            <small class="text-white-50">Comparing MineSched Plan vs. Field Actuals</small>
+        </div>
+        {% if scenario %}
+            <span class="badge bg-primary p-2 shadow">Active Plan: {{ scenario.name }}</span>
+        {% else %}
+            <a href="{% url 'upload_schedule' %}" class="btn btn-danger">⚠️ No Plan Loaded</a>
+        {% endif %}
+    </div>
+
+    <div class="card bg-dark text-white shadow">
+        <div class="card-header py-3 bg-dark border-bottom border-secondary">
+            <h6 class="m-0 font-weight-bold text-primary">Performance Variance Analysis</h6>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-dark table-bordered table-hover">
+                    <thead class="thead-light">
+                        <tr class="text-center text-warning" style="font-size: 0.9rem;">
+                            <th style="width: 15%">Period</th>
+                            <th>Material</th>
+                            <th>Planned (t)</th>
+                            <th>Actual (t)</th>
+                            <th>Variance (t)</th>
+                            <th>Perf %</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in reconciliation_data %}
+                        <tr>
+                            <td class="align-middle text-center">
+                                <div class="fw-bold text-white">Period {{ row.period }}</div>
+                                <span class="badge bg-secondary" style="font-size: 0.7em">{{ row.dates }}</span>
+                            </td>
+                            <td class="align-middle">
+                                <span class="badge 
+                                    {% if row.material == 'Waste' %}bg-danger
+                                    {% elif 'High' in row.material %}bg-success
+                                    {% else %}bg-warning text-dark{% endif %}">
+                                    {{ row.material }}
+                                </span>
+                            </td>
+                            
+                            <td class="text-end text-white">{{ row.planned|floatformat:0|intcomma }}</td>
+                            
+                            <td class="text-end fw-bold text-warning">{{ row.actual|floatformat:0|intcomma }}</td>
+                            
+                            <td class="text-end {% if row.variance >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                {% if row.variance > 0 %}+{% endif %}{{ row.variance|floatformat:0|intcomma }}
+                            </td>
+                            
+                            <td class="text-end">
+                                <div class="progress" style="height: 6px; width: 80px; display: inline-flex;">
+                                    <div class="progress-bar {% if row.var_pct >= 0 %}bg-success{% else %}bg-danger{% endif %}" 
+                                         role="progressbar" style="width: {{ row.var_pct|stringformat:'f' }}%"></div>
+                                </div>
+                                <small class="ms-2 text-white">{{ row.var_pct|floatformat:1 }}%</small>
+                            </td>
+
+                            <td class="text-center align-middle">
+                                {% if row.variance >= 0 %}
+                                    <i class="fas fa-check-circle text-success fa-lg"></i>
+                                {% else %}
+                                    <i class="fas fa-exclamation-circle text-danger fa-lg"></i>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center p-5 text-white-50">
+                                <i class="fas fa-clipboard-list fa-3x mb-3"></i>
+                                <p>No data available. Ensure specific dates match between Plan and Actuals.</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

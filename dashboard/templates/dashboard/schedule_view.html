@@ -1,0 +1,83 @@
+{% extends 'dashboard/base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="text-white">📅 Production Schedule: {{ scenario.name }}</h2>
+        <a href="{% url 'upload_schedule' %}" class="btn btn-sm btn-outline-light">
+            <i class="fas fa-upload"></i> Upload New Plan
+        </a>
+    </div>
+
+    <div class="card bg-dark text-white shadow">
+        <div class="card-header py-3">
+            <h6 class="m-0 font-weight-bold text-primary">Master Schedule Details</h6>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-dark table-striped table-hover table-sm">
+                    <thead>
+                        <tr class="text-warning">
+                            <th>Pd</th>
+                            <th>Dates</th>
+                            <th>Fleet / Resource</th>
+                            <th>Activity</th> <th>Source <i class="fas fa-arrow-right"></i> Dest</th>
+                            <th>Material</th>
+                            <th class="text-end">Volume (m³)</th>
+                            <th class="text-end">Mass (t)</th>
+                            <th class="text-end">Aggregate</th> <th class="text-end">Dist (m)</th>
+                            <th class="text-end">Grade</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in schedules %}
+                        <tr>
+                            <td>{{ item.period }}</td>
+                            
+                            <td>{{ item.start_date|date:"d M" }} - {{ item.end_date|date:"d M" }}</td>
+                            
+                            <td class="text-info">
+                                {% if item.fleet %}
+                                    <i class="fas fa-truck-moving mr-1"></i> {{ item.fleet }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                <span class="badge bg-secondary">{{ item.metadata.Activity|default:"-" }}</span>
+                            </td>
+
+                            <td>
+                                <small>{{ item.source }}</small> <i class="fas fa-angle-right text-muted"></i> <small>{{ item.destination }}</small>
+                            </td>
+
+                            <td>
+                                {% if item.material_type == 'waste' %}<span class="badge bg-danger">Waste</span>
+                                {% elif item.material_type == 'high_grade' %}<span class="badge bg-success">High Grade</span>
+                                {% else %}<span class="badge bg-warning text-dark">{{ item.material_type|title|cut:"_" }}</span>{% endif %}
+                            </td>
+
+                            <td class="text-end text-muted">{{ item.volume|intcomma }}</td>
+                            
+                            <td class="text-end fw-bold">{{ item.mass|intcomma }}</td>
+
+                            <td class="text-end text-muted">
+                                {{ item.metadata.aggregate|default:"-" }}
+                            </td>
+
+                            <td class="text-end">{{ item.haul_distance|intcomma }}</td>
+                            
+                            <td class="text-end text-info">{{ item.grade|floatformat:2 }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="11" class="text-center">No schedule data found.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

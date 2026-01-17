@@ -27,12 +27,17 @@ urlpatterns = [
     path('pit-map/', views.pit_map_view, name='pit_map'),
    
     path('dashboard/pit_phase_dashboard/', views.pit_phase_dashboard, name='pit-phase-dashboard'),\
-    
+    path('mass-analysis/', views.mass_analysis_view, name='mass_analysis'),
     path("pit-data/", views.pit_data, name="pit-data"),
     path("pit-map/", views.pit_map_view, name="pit-map"),
+    #path('pit-progress/', views.pit_progress_view, name='pit_progress'),
     
     #proccess plant dashboard
     path('processing/loss/', views.processing_loss_dashboard, name='processing-loss-dashboard'),
     path('processing/loss/data/', views.processing_loss_data, name='processing-loss-data'),
+
+    path('upload-schedule/', views.upload_schedule_view, name='upload_schedule'),
+    path('schedule-dashboard/', views.schedule_dashboard_view, name='schedule_dashboard'),
+    path('reconciliation/', views.reconciliation_view, name='reconciliation'),
 
 ]

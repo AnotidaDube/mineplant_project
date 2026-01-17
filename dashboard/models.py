@@ -1,6 +1,10 @@
 from django.db import models
 from django.conf import settings
 
+# ==========================================
+# 1. CORE MINING MODELS
+# ==========================================
+
 class MinePhase(models.Model):
     """Represents a mining phase or pushback within a pit."""
     name = models.CharField(max_length=100)
@@ -10,7 +14,7 @@ class MinePhase(models.Model):
     planned_start = models.DateField(null=True, blank=True)
     planned_end = models.DateField(null=True, blank=True)
 
-    # Expected targets
+    # Expected targets (Auto-filled by CSV or Manual Override)
     expected_grade = models.FloatField(null=True, blank=True, help_text="Expected average grade (g/t)")
     expected_tonnage = models.FloatField(null=True, blank=True, help_text="Expected total tonnage (t)")
 
@@ -20,7 +24,7 @@ class MinePhase(models.Model):
     def __str__(self):
         return f"{self.pit} - Phase {self.phase_number}"
 
-    # --- Derived values ---
+    # --- Derived values for Reports ---
     def actual_grade(self):
         samples = self.ore_samples.all()
         if not samples.exists():
@@ -65,10 +69,12 @@ class OreSample(models.Model):
         return f"{self.sample_id or 'Sample'} ({self.actual_grade_g_t} g/t)"
 
 
+# ==========================================
+# 2. PLANT & PROCESSING MODELS
+# ==========================================
 
 class Plant(models.Model):
     """Represents a processing plant (Plant A, Plant B, etc.)"""
-
     name = models.CharField(max_length=100, unique=True)
     location = models.CharField(max_length=200, blank=True)
     capacity_tph = models.FloatField(
@@ -76,16 +82,10 @@ class Plant(models.Model):
         help_text="Plant throughput capacity (tons per hour)"
     )
 
-    # --- Default processing parameters (used if not set in ProductionRecord) ---
-    default_grade = models.FloatField(
-        null=True, blank=True, help_text="Default feed grade in g/t"
-    )
-    default_recovery = models.FloatField(
-        null=True, blank=True, help_text="Default gold recovery fraction (e.g. 0.92 = 92%)"
-    )
-    default_gold_price = models.FloatField(
-        null=True, blank=True, help_text="Default gold price per kg (USD)"
-    )
+    # Defaults
+    default_grade = models.FloatField(null=True, blank=True, help_text="Default feed grade in g/t")
+    default_recovery = models.FloatField(null=True, blank=True, help_text="Default gold recovery fraction (e.g. 0.92 = 92%)")
+    default_gold_price = models.FloatField(null=True, blank=True, help_text="Default gold price per kg (USD)")
 
     class Meta:
         verbose_name = "Processing Plant"
@@ -96,36 +96,24 @@ class Plant(models.Model):
         return self.name
 
 
-
 class PlantDemand(models.Model):
     """Records plant ore demand over time for multiple plants."""
     plant = models.ForeignKey(Plant, on_delete=models.CASCADE, related_name="demands", null=True, blank=True)
-
     timestamp = models.DateTimeField()
     required_tonnage = models.FloatField()
 
     def __str__(self):
         plant_name = self.plant.name if self.plant else "Unknown Plant"
-        timestamp = self.timestamp.date() if self.timestamp else "No Date"
-        return f"{plant_name} - {timestamp}: {self.required_tonnage}t"
-
-
+        return f"{plant_name} - {self.required_tonnage}t"
 
 
 class ProductionRecord(models.Model):
-    """Tracks production tonnage, grade, and economic impact for each phase and plant."""
-    
-    mine_phase = models.ForeignKey(
-        'MinePhase', on_delete=models.CASCADE, related_name='production_records'
-    )
-    plant = models.ForeignKey(
-        'Plant', on_delete=models.CASCADE, related_name='productions', null=True, blank=True
-    )
+    """Tracks ACTUAL production tonnage, grade, and economic impact."""
+    mine_phase = models.ForeignKey('MinePhase', on_delete=models.CASCADE, related_name='production_records')
+    plant = models.ForeignKey('Plant', on_delete=models.CASCADE, related_name='productions', null=True, blank=True)
     timestamp = models.DateTimeField()
     tonnage = models.FloatField()
-    expected_tonnage = models.FloatField(
-        null=True, blank=True, help_text="Planned tonnage for this batch"
-    )
+    expected_tonnage = models.FloatField(null=True, blank=True, help_text="Planned tonnage for this batch")
     material_type = models.CharField(
         max_length=20,
         choices=[('ore', 'Ore'), ('waste', 'Waste')],
@@ -135,7 +123,7 @@ class ProductionRecord(models.Model):
     status = models.CharField(max_length=20, blank=True)
     source = models.CharField(max_length=100, blank=True)
 
-    # --- New adjustable fields for economic calculations ---
+    # Economic / Grade fields
     grade = models.FloatField(null=True, blank=True, help_text="Grade in g/t")
     recovery = models.FloatField(null=True, blank=True, help_text="Recovery fraction (0.9 = 90%)")
     gold_price = models.FloatField(null=True, blank=True, help_text="Gold price per kg (USD)")
@@ -143,9 +131,8 @@ class ProductionRecord(models.Model):
     class Meta:
         ordering = ['-timestamp']
 
-    # --- Auto-calculated variance and status ---
     def save(self, *args, **kwargs):
-        """Auto-calculate tonnage variance and status before saving."""
+        """Auto-calculate variance and status."""
         if self.expected_tonnage is not None:
             self.variance = self.tonnage - self.expected_tonnage
             if self.variance > 0:
@@ -159,78 +146,57 @@ class ProductionRecord(models.Model):
             self.status = "N/A"
         super().save(*args, **kwargs)
 
-    # --- Processing loss calculations ---
     def is_underbreak(self):
         return self.status == "Underbreak" and self.variance is not None
 
     def _effective_grade(self):
-        """Get effective grade (record > plant default > global default)."""
-        if self.grade is not None:
-            return self.grade
-        if self.plant and getattr(self.plant, 'default_grade', None) is not None:
-            return self.plant.default_grade
+        if self.grade is not None: return self.grade
+        if self.plant and getattr(self.plant, 'default_grade', None) is not None: return self.plant.default_grade
         return getattr(settings, 'DEFAULT_GRADE_GPT', None)
 
     def _effective_recovery(self):
-        """Get effective recovery (record > plant default > global default)."""
-        if self.recovery is not None:
-            return self.recovery
-        if self.plant and getattr(self.plant, 'default_recovery', None) is not None:
-            return self.plant.default_recovery
+        if self.recovery is not None: return self.recovery
+        if self.plant and getattr(self.plant, 'default_recovery', None) is not None: return self.plant.default_recovery
         return getattr(settings, 'DEFAULT_RECOVERY', None)
 
     def _effective_gold_price(self):
-        """Get effective gold price (record > plant default > global default)."""
-        if self.gold_price is not None:
-            return self.gold_price
-        if self.plant and getattr(self.plant, 'default_gold_price', None) is not None:
-            return self.plant.default_gold_price
+        if self.gold_price is not None: return self.gold_price
+        if self.plant and getattr(self.plant, 'default_gold_price', None) is not None: return self.plant.default_gold_price
         return getattr(settings, 'DEFAULT_GOLD_PRICE_PER_KG', None)
 
     def gold_lost_kg(self):
-        """Calculate gold lost (in kg) when underbreak occurs in ORE."""
-        # 1. Safety Check: If this is Waste, we don't lose gold revenue
-        if self.material_type != 'ore':
+        if self.material_type != 'ore' or not self.is_underbreak():
             return 0.0
-
-        # 2. Safety Check: Only calculate if we are truly under target
-        if not self.is_underbreak():
-            return 0.0
-
         grade = self._effective_grade()
         recovery = self._effective_recovery()
+        if grade is None or recovery is None: return 0.0
         
-        if grade is None or recovery is None:
-            return 0.0
-
         variance_t = abs(self.variance)
-        gold_kg = variance_t * grade * recovery / 1000.0  # (tonnes * g/t = g, /1000 = kg)
-        return round(gold_kg, 6)
+        return round(variance_t * grade * recovery / 1000.0, 6)
 
     def revenue_lost_usd(self):
-        """Calculate revenue lost (in USD) due to gold lost."""
         gold_kg = self.gold_lost_kg()
-        if gold_kg <= 0:
-            return 0.0
-        
         price = self._effective_gold_price()
-        if price is None:
-            return 0.0
+        if gold_kg <= 0 or price is None: return 0.0
         return round(gold_kg * price, 2)
 
+    def get_grade_category(self):
+        if self.material_type == 'waste': return 'Waste'
+        if self.grade < 1.5: return 'Low Grade'
+        elif 1.5 <= self.grade < 3.5: return 'Medium Grade'
+        else: return 'High Grade'
+
     def __str__(self):
-        return f"{self.mine_phase} → {self.plant or 'No Plant'} ({self.tonnage}t)"
+        return f"{self.mine_phase} -> {self.plant} ({self.tonnage}t)"
+
 
 class Stockpile(models.Model):
-    """Tracks ore stockpiles ready for plant feed."""
+    """Tracks ore stockpile levels."""
     name = models.CharField(max_length=100)
     current_tonnage = models.FloatField(default=0)
     projected_tonnage = models.FloatField(default=0)
     grade = models.FloatField(null=True, blank=True)
     last_updated = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"{self.name} ({self.current_tonnage}t)"
 
     def variance(self):
         return self.current_tonnage - self.projected_tonnage
@@ -239,10 +205,17 @@ class Stockpile(models.Model):
         if self.projected_tonnage:
             return ((self.current_tonnage - self.projected_tonnage) / self.projected_tonnage) * 100
         return 0
+    
+    def __str__(self):
+        return self.name
 
+
+# ==========================================
+# 3. PLANNING & SCHEDULE MODELS
+# ==========================================
 
 class PhaseSchedule(models.Model):
-    """Monitors progress of a mining phase."""
+    """Monitors progress of a mining phase (Visual Tracker)."""
     mine_phase = models.OneToOneField('MinePhase', on_delete=models.CASCADE, related_name='schedule')
     planned_start = models.DateField(null=True, blank=True)
     planned_end = models.DateField(null=True, blank=True)
@@ -251,35 +224,73 @@ class PhaseSchedule(models.Model):
     current_progress = models.FloatField(default=0)
     status = models.CharField(
         max_length=20,
-        choices=[
-            ('planned', 'Planned'),
-            ('active', 'Active'),
-            ('completed', 'Completed'),
-        ],
+        choices=[('planned', 'Planned'), ('active', 'Active'), ('completed', 'Completed')],
         default='planned'
     )
 
     def update_removed_tonnage(self):
-        total_removed = (
-            self.mine_phase.production_records.aggregate(models.Sum('tonnage'))['tonnage__sum'] or 0
-        )
+        total_removed = (self.mine_phase.production_records.aggregate(models.Sum('tonnage'))['tonnage__sum'] or 0)
         self.removed_tonnage = total_removed
         self.current_progress = self.progress_percent()
         self.update_status()
         self.save()
 
     def progress_percent(self):
-        if self.planned_tonnage <= 0:
-            return 0
+        if self.planned_tonnage <= 0: return 0
         return round(min(100, (self.removed_tonnage / self.planned_tonnage) * 100), 1)
 
     def update_status(self):
-        if self.current_progress == 0:
-            self.status = 'planned'
-        elif self.current_progress < 100:
-            self.status = 'active'
-        else:
-            self.status = 'completed'
+        if self.current_progress == 0: self.status = 'planned'
+        elif self.current_progress < 100: self.status = 'active'
+        else: self.status = 'completed'
 
     def __str__(self):
         return f"{self.mine_phase} - {self.status}"
+
+
+class ScheduleScenario(models.Model):
+    """Groups schedule data (e.g., 'mucs_2026')."""
+    name = models.CharField(max_length=100, default="mucs_2026")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+
+class MaterialSchedule(models.Model):
+    """
+    Stores the rows from your MineSched CSV export.
+    This is the RAW PLAN data.
+    """
+    scenario = models.ForeignKey(ScheduleScenario, on_delete=models.CASCADE, related_name='schedules')
+    period = models.IntegerField(help_text="Period Number (e.g., 1, 2, 3)")
+    start_date = models.DateField()
+    end_date = models.DateField()
+    phase_name = models.CharField(max_length=100, blank=True, null=True, help_text="e.g., 'Phase 1' or 'mucs_luck_pit'")
+    
+    source = models.CharField(max_length=100)
+    destination = models.CharField(max_length=100)
+    
+    material_type = models.CharField(max_length=50, choices=[
+        ('waste', 'Waste'), ('low_grade', 'Low Grade'), ('medium_grade', 'Medium Grade'), ('high_grade', 'High Grade'),
+    ])
+    
+    volume = models.FloatField(default=0)
+    mass = models.FloatField(default=0)
+    haul_distance = models.FloatField(default=0) 
+    grade = models.FloatField(default=0)
+
+    # --- [CHANGED/NEW SECTION] ---
+    # Added 'fleet' to capture the "Resource" column (e.g., fleet1)
+    fleet = models.CharField(max_length=100, blank=True, null=True, help_text="e.g. fleet1, load_and_haul")
+    
+    # Added 'metadata' to capture "Activity", "aggregate", and "Quantity"
+    # This prevents the system from breaking if you add new columns later.
+    metadata = models.JSONField(default=dict, blank=True, help_text="Stores extra CSV columns like Activity, Aggregate, etc.")
+    # -----------------------------
+
+    class Meta:
+        ordering = ['period', 'material_type']
+
+    def __str__(self):
+        return f"Pd {self.period} - {self.material_type} ({self.mass}t)"

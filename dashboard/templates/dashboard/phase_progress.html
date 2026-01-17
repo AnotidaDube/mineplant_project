@@ -21,10 +21,14 @@
     <!-- Progress Map -->
     <div class="card bg-dark text-light p-3 mb-4 shadow">
         <h5>Progress Map</h5>
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
         {% if pit_map_img %}
-            <img src="data:image/png;base64,{{ pit_map_img }}" alt="Progress Map" class="img-fluid">
+            <div style="width: 100%; height: 600px;">
+                {{ pit_map_img|safe }}
+            </div>
         {% else %}
-            <p class="text-warning">Pit map not available.</p>
+            <p class="text-warning p-3">Pit map not available. Check 'pit_design.str'.</p>
         {% endif %}
     </div>
 

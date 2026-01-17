@@ -1,118 +1,236 @@
-{% extends "dashboard/base.html" %}
+{% extends 'dashboard/base.html' %}
+{% load humanize %}
+
 {% block title %}Pit Phase Dashboard{% endblock %}
 
 {% block content %}
-<div class="container-fluid mt-4">
+<div class="container-fluid">
 
-    <h2 class="text-dark bg-light p-3 rounded mb-4">⛏️ Pit Phase Dashboard</h2>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-0 text-gray-800">⛏️ Pit Phase Progress</h1>
+            <p class="mb-0 text-muted small">Real-time tracking of mining advancement against the MineSched Plan.</p>
+        </div>
+        <a href="{% url 'add_phaseschedule' %}" class="btn btn-sm btn-primary shadow-sm">
+            <i class="fas fa-plus fa-sm text-white-50"></i> Add New Phase
+        </a>
+    </div>
 
-    <!-- KPI Panel -->
     <div class="row mb-4">
-        <div class="col-md-4">
-            <div class="card text-center shadow-sm">
+        <div class="col-xl-4 col-md-6 mb-4">
+            <div class="card border-left-primary shadow h-100 py-2">
                 <div class="card-body">
-                    <h5>Total Planned Tonnage</h5>
-                    <h3>{{ total_planned|floatformat:0 }} t</h3>
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                Total Planned Tonnage</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ total_planned|floatformat:0|intcomma }} t</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-clipboard-list fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
-            <div class="card text-center shadow-sm">
+
+        <div class="col-xl-4 col-md-6 mb-4">
+            <div class="card border-left-success shadow h-100 py-2">
                 <div class="card-body">
-                    <h5>Total Actual Tonnage</h5>
-                    <h3>{{ total_actual|floatformat:0 }} t</h3>
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                Total Actual Tonnage</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ total_actual|floatformat:0|intcomma }} t</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-truck-loading fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
-            <div class="card text-center shadow-sm">
+
+        <div class="col-xl-4 col-md-6 mb-4">
+            <div class="card border-left-warning shadow h-100 py-2">
                 <div class="card-body">
-                    <h5>Total Variance</h5>
-                    <h3 class="{{ 'text-success' if total_variance>=0 else 'text-danger' }}">
-                        {{ total_variance|floatformat:0 }} t
-                        {% if total_variance>=0 %}▲{% else %}▼{% endif %}
-                    </h3>
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                Total Variance</div>
+                            <div class="h5 mb-0 font-weight-bold {% if total_variance >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                {% if total_variance > 0 %}+{% endif %}{{ total_variance|floatformat:0|intcomma }} t
+                            </div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-balance-scale fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Phase Progress Chart -->
-    <canvas id="phaseTonnageChart" width="1000" height="400"></canvas>
+    <div class="card shadow mb-4">
+        <div class="card-header py-3">
+            <h6 class="m-0 font-weight-bold text-primary">Phase Performance Chart</h6>
+        </div>
+        <div class="card-body">
+            <div class="chart-bar" style="height: 400px;">
+                <canvas id="phaseTonnageChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        {% for p in phases %}
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow mb-4 {% if p.status == 'active' %}border-primary{% else %}border-left-secondary{% endif %}">
+                
+                <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between bg-white">
+                    <h6 class="m-0 font-weight-bold text-primary">{{ p.mine_phase.name }}</h6>
+                    
+                    {% if p.status == 'active' %}
+                        <span class="badge bg-primary fs-6 px-3 py-2 shadow-sm">
+                            <i class="fas fa-hammer animate__animated animate__swing animate__infinite"></i> CURRENTLY MINING
+                        </span>
+                    {% elif p.status == 'completed' %}
+                        <span class="badge bg-success">COMPLETED</span>
+                    {% else %}
+                        <span class="badge bg-secondary">PLANNED</span>
+                    {% endif %}
+                </div>
+
+                <div class="card-body">
+                    <div class="row text-center mb-4">
+                        <div class="col-6 border-right">
+                            <div class="small text-uppercase text-gray-500 mb-1">Target Tonnage</div>
+                            <div class="h5 font-weight-bold text-gray-800">
+                                {{ p.mine_phase.expected_tonnage|floatformat:0|intcomma }} t
+                            </div>
+                            <small class="text-xs text-muted">(From Schedule)</small>
+                        </div>
+                        <div class="col-6">
+                            <div class="small text-uppercase text-gray-500 mb-1">Target Grade</div>
+                            <div class="h5 font-weight-bold text-info">
+                                {{ p.mine_phase.expected_grade|floatformat:2 }} g/t
+                            </div>
+                            <small class="text-xs text-muted">(Weighted Avg)</small>
+                        </div>
+                    </div>
+
+                    <h4 class="small font-weight-bold">
+                        Advancement <span class="float-right">{{ p.current_progress }}%</span>
+                    </h4>
+                    <div class="progress mb-2" style="height: 20px;">
+                        <div class="progress-bar {% if p.current_progress >= 100 %}bg-success{% else %}bg-primary{% endif %} progress-bar-striped progress-bar-animated" 
+                             role="progressbar" 
+                             style="width: {{ p.current_progress }}%">
+                        </div>
+                    </div>
+                    
+                    <div class="text-right mt-2 small text-muted">
+                        Actually Removed: <strong>{{ p.removed_tonnage|floatformat:0|intcomma }} t</strong>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
 </div>
-{% endblock %}
 
-{% block extra_js %}
+{{ phase_names|json_script:"phaseNamesData" }}
+{{ planned_tonnage|json_script:"plannedData" }}
+{{ actual_ore|json_script:"actualOreData" }}
+{{ actual_waste|json_script:"actualWasteData" }}
+{{ variance_total|json_script:"varianceData" }}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-const phaseNames = {{ phase_names|safe }};
-const plannedData = {{ planned_tonnage|safe }};
-const actualOreData = {{ actual_ore|safe }};
-const actualWasteData = {{ actual_waste|safe }};
-const varianceData = {{ variance_total|safe }};
+    // Retrieve the clean data from the script tags
+    const phaseNames = JSON.parse(document.getElementById('phaseNamesData').textContent);
+    const plannedData = JSON.parse(document.getElementById('plannedData').textContent);
+    const actualOreData = JSON.parse(document.getElementById('actualOreData').textContent);
+    const actualWasteData = JSON.parse(document.getElementById('actualWasteData').textContent);
+    const varianceData = JSON.parse(document.getElementById('varianceData').textContent);
 
-const ctx = document.getElementById('phaseTonnageChart').getContext('2d');
-new Chart(ctx, {
-    type: 'bar',
-    data: {
-        labels: phaseNames,
-        datasets: [
-            {
-                label: 'Planned Tonnage',
-                data: plannedData,
-                backgroundColor: 'rgba(100, 149, 237, 0.6)',
-                borderColor: '#4169E1',
-                borderWidth: 1
-            },
-            {
-                label: 'Actual Ore',
-                data: actualOreData,
-                backgroundColor: 'rgba(34, 139, 34, 0.7)',
-                borderColor: '#228B22',
-                borderWidth: 1
-            },
-            {
-                label: 'Actual Waste',
-                data: actualWasteData,
-                backgroundColor: 'rgba(255, 165, 0, 0.7)',
-                borderColor: '#FF8C00',
-                borderWidth: 1
-            },
-            {
-                label: 'Variance',
-                data: varianceData,
-                type: 'line',
-                fill: false,
-                borderColor: varianceData.map(v => v >= 0 ? '#FF0000' : '#1E90FF'),
-                borderWidth: 2,
-                tension: 0.2,
-                pointStyle: 'rectRot',
-                pointRadius: 5
-            }
-        ]
-    },
-    options: {
-        responsive: true,
-        plugins: {
-            tooltip: {
-                callbacks: {
-                    label: function(ctx) {
-                        if (ctx.dataset.label === 'Variance') {
-                            const v = ctx.raw;
-                            return `Variance: ${v} t (${v >= 0 ? 'Overbreak' : 'Underbreak'})`;
-                        }
-                        return ctx.dataset.label + ': ' + ctx.raw + ' t';
-                    }
+    const ctx = document.getElementById('phaseTonnageChart').getContext('2d');
+    
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: phaseNames,
+            datasets: [
+                {
+                    label: 'Planned Tonnage',
+                    data: plannedData,
+                    backgroundColor: 'rgba(78, 115, 223, 0.5)', // Bootstrap Primary Blue
+                    borderColor: '#4e73df',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Actual Ore',
+                    data: actualOreData,
+                    backgroundColor: 'rgba(28, 200, 138, 0.6)', // Green
+                    borderColor: '#1cc88a',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Actual Waste',
+                    data: actualWasteData,
+                    backgroundColor: 'rgba(246, 194, 62, 0.6)', // Yellow
+                    borderColor: '#f6c23e',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Variance',
+                    data: varianceData,
+                    type: 'line',
+                    fill: false,
+                    borderColor: '#e74a3b', // Red
+                    borderWidth: 2,
+                    tension: 0.3,
+                    pointRadius: 4,
+                    pointBackgroundColor: '#e74a3b'
+                }
+            ]
+        },
+        options: {
+            maintainAspectRatio: false,
+            layout: { padding: { left: 10, right: 25, top: 25, bottom: 0 } },
+            scales: {
+                x: { 
+                    stacked: false, // Set to true if you want Ore+Waste stacked
+                    grid: { display: false, drawBorder: false },
+                    ticks: { maxTicksLimit: 6 }
+                },
+                y: { 
+                    stacked: false, 
+                    ticks: { maxTicksLimit: 5, padding: 10, callback: function(value) { return value.toLocaleString() + ' t'; } },
+                    grid: { color: "rgb(234, 236, 244)", zeroLineColor: "rgb(234, 236, 244)", drawBorder: false, borderDash: [2], zeroLineBorderDash: [2] }
                 }
             },
-            legend: {
-                position: 'top'
+            plugins: {
+                legend: { position: 'top' },
+                tooltip: {
+                    backgroundColor: "rgb(255,255,255)",
+                    bodyColor: "#858796",
+                    titleMarginBottom: 10,
+                    titleColor: '#6e707e',
+                    titleFont: { size: 14 },
+                    borderColor: '#dddfeb',
+                    borderWidth: 1,
+                    xPadding: 15,
+                    yPadding: 15,
+                    displayColors: false,
+                    intersect: false,
+                    mode: 'index',
+                    caretPadding: 10
+                }
             }
-        },
-        scales: {
-            x: { stacked: true, title: { display: true, text: 'Pit Phases' }},
-            y: { stacked: false, beginAtZero: true, title: { display: true, text: 'Tonnage (t)' } }
         }
-    }
-});
+    });
 </script>
 {% endblock %}

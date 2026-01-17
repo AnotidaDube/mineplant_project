@@ -83,21 +83,34 @@ class StockpileForm(forms.ModelForm):
 
         
 
-class PhaseScheduleForm(forms.ModelForm):
-    class Meta:
-        model = PhaseSchedule
-        fields = [
-            'mine_phase',
-            'planned_start',
-            'planned_end',
-            'planned_tonnage',
-            'removed_tonnage',
-            'status'
-        ]
-        widgets = {
-            'planned_start': forms.DateInput(attrs={'type': 'date'}),
-            'planned_end': forms.DateInput(attrs={'type': 'date'}),
-        }
+# dashboard/forms.py
+
+class PhaseScheduleForm(forms.Form):
+    # 1. We ask for the Name instead of a Dropdown
+    phase_name = forms.CharField(
+        max_length=100, 
+        label="Phase Name",
+        widget=forms.TextInput(attrs={
+            'class': 'form-control', 
+            'placeholder': 'e.g. Phase 1',
+            'list': 'csv_phases' # Connects to the datalist for auto-complete
+        })
+    )
+    
+    pit_name = forms.CharField(
+        max_length=100, 
+        label="Pit Name",
+        initial="Open Pit A",
+        widget=forms.TextInput(attrs={'class': 'form-control'})
+    )
+
+    planned_start = forms.DateField(
+        widget=forms.DateInput(attrs={'class': 'form-control', 'type': 'date'})
+    )
+    
+    planned_end = forms.DateField(
+        widget=forms.DateInput(attrs={'class': 'form-control', 'type': 'date'})
+    )
 
 class ExpectedValuesForm(forms.ModelForm):
     class Meta:
@@ -115,3 +128,14 @@ class ExpectedValuesForm(forms.ModelForm):
                 'step': '0.01'
             }),
         }
+
+class ScheduleUploadForm(forms.Form):
+    scenario_name = forms.CharField(
+        max_length=100, 
+        label="Scenario Name",
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'e.g., Budget_2026'})
+    )
+    csv_file = forms.FileField(
+        label="Upload MineSched CSV",
+        widget=forms.ClearableFileInput(attrs={'class': 'form-control'})
+    )

@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'channels',
+    'django.contrib.humanize',
 
     #my added apps
     'rest_framework',
@@ -144,3 +145,4 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 DEFAULT_GRADE_GPT = 1.2 # g/t
 DEFAULT_RECOVERY = 0.92 # 92%
 DEFAULT_GOLD_PRICE_PER_KG = 60000.0 # example USD/kg
+

@@ -1,0 +1,61 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<div class="container-fluid">
+
+    <div class="d-sm-flex align-items-center justify-content-between mb-4">
+        <h1 class="h3 mb-0 text-gray-800">Upload Mine Schedule</h1>
+    </div>
+
+    <div class="row justify-content-center">
+        <div class="col-lg-6">
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Upload CSV File</h6>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <strong>Instructions:</strong>
+                        <ul class="mb-0 pl-3 small">
+                            <li>Export your schedule from MineSched as a CSV.</li>
+                            <li>Ensure headers are: Period, Start Date, End Date, Source, Destination, Material, Volume, Mass, Length, Grade.</li>
+                            <li>Date format should be <strong>dd/mm/yyyy</strong>.</li>
+                        </ul>
+                    </div>
+
+                    <form method="post" enctype="multipart/form-data">
+                        {% csrf_token %}
+                        
+                        <div class="mb-3">
+                            <label for="{{ form.scenario_name.id_for_label }}" class="form-label font-weight-bold">
+                                {{ form.scenario_name.label }}
+                            </label>
+                            {{ form.scenario_name }}
+                            {% if form.scenario_name.errors %}
+                                <div class="text-danger small">{{ form.scenario_name.errors }}</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="{{ form.csv_file.id_for_label }}" class="form-label font-weight-bold">
+                                {{ form.csv_file.label }}
+                            </label>
+                            {{ form.csv_file }}
+                            {% if form.csv_file.errors %}
+                                <div class="text-danger small">{{ form.csv_file.errors }}</div>
+                            {% endif %}
+                        </div>
+
+                        <hr>
+
+                        <button type="submit" class="btn btn-primary btn-block btn-lg">
+                            <i class="fas fa-upload fa-sm text-white-50 mr-2"></i> Upload Schedule
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

@@ -4,21 +4,21 @@ import os
 import io
 from io import BytesIO
 from datetime import date
-
+import plotly.graph_objects as go
+from plotly.offline import plot
 import matplotlib
 # Set backend to 'Agg' before importing pyplot to avoid GUI errors on server
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-
+from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image, ImageDraw
-
+from datetime import datetime
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse, HttpResponseNotAllowed
 from django.db.models import Sum
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.timezone import make_aware
-
 # ReportLab imports for Server-Side PDF generation
 from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -56,6 +56,14 @@ from .serializers import (
     StockpileSerializer,
     PhaseScheduleSerializer
 )
+#imports for csv handling
+import csv
+import io
+from collections import defaultdict
+from django.contrib import messages
+from .models import ScheduleScenario, MaterialSchedule
+from .forms import ScheduleUploadForm
+
 
 # ==========================================
 # API Views (Django Rest Framework)
@@ -89,7 +97,48 @@ class PhaseScheduleList(generics.ListAPIView):
 # ==========================================
 # Dashboard Views
 # ==========================================
+""""
+def pit_progress_view(request):
+    # 1. Point to the file in your 'data' folder
+    file_path = os.path.join(settings.BASE_DIR, 'data', 'pit_design.str')
+    
+    # 2. Parse the data
+    pit_data = parse_str_file(file_path)
 
+    # 3. Create the Plot
+    plt.figure(figsize=(12, 10)) # Set a nice large size
+    
+    if pit_data:
+        for str_id, coords in pit_data.items():
+            # Extract X and Y for this specific string ID
+            xs = [point[0] for point in coords]
+            ys = [point[1] for point in coords]
+            
+            # Plot the line (linewidth=1 makes it look like a wireframe)
+            plt.plot(xs, ys, linewidth=1, label=f"String {str_id}")
+            
+    else:
+        plt.text(0.5, 0.5, "No Data Found. Check file path.", ha='center')
+
+    # 4. Styling
+    plt.title("Pit Phase Design")
+    plt.xlabel("Easting (X)")
+    plt.ylabel("Northing (Y)")
+    plt.grid(True, linestyle='--', alpha=0.3)
+    plt.axis('equal') # Crucial: ensures the pit doesn't look stretched
+    
+    # 5. Convert plot to image string
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', bbox_inches='tight')
+    buffer.seek(0)
+    image_png = buffer.getvalue()
+    buffer.close()
+    plt.close() # Close memory
+
+    graphic = base64.b64encode(image_png).decode('utf-8')
+
+    return render(request, 'dashboard/pit_progress.html', {'graphic': graphic})
+"""
 def mine_plant_dashboard(request):
     """
     Renders the main dashboard home page linking all sections.
@@ -184,28 +233,46 @@ def stockpile_forecast_view(request):
 # ==========================================
 
 def generate_pit_map_base64(parsed_phases):
-    """Helper to generate a base64 encoded matplotlib image of the pit."""
+    """Generates an INTERACTIVE 3D Plotly graph."""
     if not parsed_phases:
         return None
-        
-    plt.figure(figsize=(10, 8))
+
+    fig = go.Figure()
+
+    # 1. Loop through strings and add them as 3D lines
     for name, coords in parsed_phases.items():
-        xs, ys, zs = zip(*coords)
-        plt.scatter(xs, ys, s=6, label=name)
-    plt.xlabel('X')
-    plt.ylabel('Y')
-    plt.title('Pit STR Progress Map')
-    plt.legend(fontsize=8)
-    plt.axis('equal')
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        zs = [c[2] for c in coords]
 
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-    buf.close()
-    plt.close()
-    return img_base64
+        fig.add_trace(go.Scatter3d(
+            x=xs, y=ys, z=zs,
+            mode='lines',              # Wireframe mode
+            name=f'String {name}',
+            line=dict(width=3)         # Thickness of the lines
+        ))
 
+    # 2. Styling to look like the Video (Black Background)
+    fig.update_layout(
+        template='plotly_dark',             # Dark theme like CAD
+        margin=dict(l=0, r=0, b=0, t=0),    # Tight margins
+        scene=dict(
+            xaxis_title='Easting',
+            yaxis_title='Northing',
+            zaxis_title='Elevation',
+            aspectmode='data',              # Crucial: Keeps real-world proportions
+
+            # Make the background explicitly black to match your video
+            xaxis=dict(backgroundcolor="black", gridcolor="gray", showbackground=True),
+            yaxis=dict(backgroundcolor="black", gridcolor="gray", showbackground=True),
+            zaxis=dict(backgroundcolor="black", gridcolor="gray", showbackground=True),
+        ),
+        paper_bgcolor="black",              # Color outside the graph
+    )
+
+    # 3. Return the HTML string (not an image)
+    # output_type='div' gives us just the graph code to put in our template
+    return plot(fig, output_type='div', include_plotlyjs=True)
 
 def phase_progress_view(request):
     """
@@ -316,49 +383,78 @@ def pit_map_view(request):
     return render(request, 'dashboard/pit_preview.html', context)
 
 
+# dashboard/views.py
+from django.db.models import Sum
+
 def pit_phase_dashboard(request):
-    """
-    Detailed dashboard for Pit Phases.
-    """
-    phases = PhaseSchedule.objects.select_related('mine_phase').all().order_by('mine_phase__sequence_order')
+    # ==========================================
+    # 1. FORCE RE-CALCULATION (The Fix)
+    # ==========================================
+    phases = MinePhase.objects.all()
+    scenario = ScheduleScenario.objects.last()
 
-    phase_names = [p.mine_phase.name for p in phases]
-    progress_percentages = [round(p.current_progress, 2) for p in phases]
+    if scenario:
+        for phase in phases:
+            # We try to find schedule rows that match the Phase Name
+            # We use 'iexact' to ignore Capital/small letter differences
+            match_rows = MaterialSchedule.objects.filter(
+                scenario=scenario, 
+                phase_name__iexact=phase.name
+            )
 
-    planned_tonnage = []
-    actual_ore = []
-    actual_waste = []
-    variance_total = []
+            # Calculate the total Mass from those rows
+            total_planned = match_rows.aggregate(Sum('mass'))['mass__sum'] or 0
+            
+            # Calculate Grade (Weighted Average)
+            total_grade_mass = 0
+            weighted_grade = 0
+            for row in match_rows:
+                if row.mass > 0:
+                    weighted_grade += (row.grade * row.mass)
+                    total_grade_mass += row.mass
+            
+            avg_grade = (weighted_grade / total_grade_mass) if total_grade_mass > 0 else 0
 
-    for p in phases:
-        planned = p.planned_tonnage
-        planned_tonnage.append(round(planned, 2))
+            # FORCE SAVE the new numbers to the Phase
+            phase.expected_tonnage = total_planned
+            phase.expected_grade = avg_grade
+            phase.save()
 
-        records = p.mine_phase.production_records
-        ore = records.filter(material_type='ore').aggregate(Sum('tonnage'))['tonnage__sum'] or 0
-        waste = records.filter(material_type='waste').aggregate(Sum('tonnage'))['tonnage__sum'] or 0
-
-        actual_ore.append(round(ore, 2))
-        actual_waste.append(round(waste, 2))
-        variance_total.append(round((ore + waste) - planned, 2))
-
-    total_planned = sum(planned_tonnage)
-    total_actual = sum(actual_ore) + sum(actual_waste)
+    # ==========================================
+    # 2. STANDARD DASHBOARD LOGIC
+    # ==========================================
+    # Get the schedule wrappers (PhaseSchedule)
+    phase_schedules = PhaseSchedule.objects.select_related('mine_phase').all().order_by('mine_phase__sequence_order')
+    
+    # Calculate KPIs for the top of the page
+    total_planned = sum(p.mine_phase.expected_tonnage for p in phases if p.expected_tonnage)
+    total_actual = sum(p.removed_tonnage for p in phase_schedules)
     total_variance = total_actual - total_planned
 
+    # Prepare Chart Data
+    phase_names = [p.mine_phase.name for p in phase_schedules]
+    planned_data = [p.mine_phase.expected_tonnage for p in phase_schedules]
+    actual_ore = [] # (You can expand this logic later if needed)
+    actual_waste = []
+    
+    # Simple actuals for the chart
+    for p in phase_schedules:
+        actual_ore.append(p.removed_tonnage) # Simplified for now
+        actual_waste.append(0)
+
     context = {
-        "phases": phases,
-        "phase_names": phase_names,
-        "progress_percentages": progress_percentages,
-        "planned_tonnage": planned_tonnage,
-        "actual_ore": actual_ore,
-        "actual_waste": actual_waste,
-        "variance_total": variance_total,
-        "total_planned": total_planned,
-        "total_actual": total_actual,
-        "total_variance": total_variance,
+        'phases': phase_schedules,
+        'total_planned': total_planned,
+        'total_actual': total_actual,
+        'total_variance': total_variance,
+        'phase_names': phase_names,
+        'planned_tonnage': planned_data,
+        'actual_ore': actual_ore,
+        'actual_waste': actual_waste,
+        'variance_total': [a - p for a, p in zip(actual_ore, planned_data)]
     }
-    return render(request, "dashboard/pit_phase_dashboard.html", context)
+
+    return render(request, 'dashboard/pit_phase_dashboard.html', context)
 
 
 def pit_data(request):
@@ -514,15 +610,59 @@ def add_plantdemand(request):
     return render(request, 'dashboard/add_plantdemand.html', {'form': form})
 
 
+# dashboard/views.py
+
 def add_phaseschedule(request):
+    # Get list of phase names found in the CSV (for auto-suggestions)
+    # This helps the user type exactly what is in the plan
+    scenario = ScheduleScenario.objects.last()
+    suggested_names = []
+    if scenario:
+        suggested_names = MaterialSchedule.objects.filter(scenario=scenario)\
+                          .values_list('phase_name', flat=True).distinct()
+
     if request.method == 'POST':
         form = PhaseScheduleForm(request.POST)
         if form.is_valid():
-            form.save()
+            p_name = form.cleaned_data['phase_name']
+            pit_name = form.cleaned_data['pit_name']
+            start = form.cleaned_data['planned_start']
+            end = form.cleaned_data['planned_end']
+
+            # 1. Get or Create the MinePhase
+            # This saves you from going to the Admin Panel!
+            phase, created = MinePhase.objects.get_or_create(
+                name=p_name,
+                defaults={
+                    'pit': pit_name,
+                    'phase_number': 1, # Default, you can edit later if needed
+                    'sequence_order': 1
+                }
+            )
+
+            # 2. Create/Update the Schedule for it
+            PhaseSchedule.objects.update_or_create(
+                mine_phase=phase,
+                defaults={
+                    'planned_start': start,
+                    'planned_end': end,
+                    'status': 'active' # Auto-set to active so it glows blue
+                }
+            )
+
+            # 3. TRIGGER AUTO-CALCULATION
+            # This pulls the 48,000t target from the CSV immediately
+            auto_update_phase_targets()
+
+            messages.success(request, f"Phase '{p_name}' created and synced with Schedule!")
             return redirect('pit_phase_dashboard')
     else:
         form = PhaseScheduleForm()
-    return render(request, 'dashboard/add_phaseschedule.html', {'form': form})
+
+    return render(request, 'dashboard/add_phaseschedule.html', {
+        'form': form,
+        'suggested_names': suggested_names
+    })
 
 
 @csrf_exempt
@@ -600,3 +740,283 @@ def export_pdf(request):
 
 def welcome_dashboard(request):
     return render(request, 'dashboard/home_dashboard.html')
+
+
+# dashboard/views.py
+from django.db.models import Sum, Case, When, FloatField
+
+def mass_analysis_view(request):
+    """
+    Dedicated view to analyze total mass columns:
+    Waste, Low Grade, Medium Grade, and High Grade.
+    """
+    # We use Django's 'aggregate' to sum specific conditions efficiently
+    analysis = ProductionRecord.objects.aggregate(
+        waste=Sum(
+            Case(When(material_type='waste', then='tonnage'), default=0, output_field=FloatField())
+        ),
+        low_grade=Sum(
+            Case(When(material_type='ore', grade__lt=1.5, then='tonnage'), default=0, output_field=FloatField())
+        ),
+        medium_grade=Sum(
+            Case(When(material_type='ore', grade__gte=1.5, grade__lt=2.5, then='tonnage'), default=0, output_field=FloatField())
+        ),
+        high_grade=Sum(
+            Case(When(material_type='ore', grade__gte=2.5, then='tonnage'), default=0, output_field=FloatField())
+        )
+    )
+
+    # Clean up None values (in case database is empty)
+    context = {
+        'waste': analysis['waste'] or 0,
+        'low_grade': analysis['low_grade'] or 0,
+        'medium_grade': analysis['medium_grade'] or 0,
+        'high_grade': analysis['high_grade'] or 0,
+        'total_moved': (analysis['waste'] or 0) + (analysis['low_grade'] or 0) + (analysis['medium_grade'] or 0) + (analysis['high_grade'] or 0)
+    }
+
+    return render(request, 'dashboard/mass_analysis.html', context)
+
+# dashboard/views.py
+
+def upload_schedule_view(request):
+    """
+    Robust Importer that handles 'MineSched' style CSVs with metadata headers.
+    It automatically finds the header row and maps 'Mining Location' to 'Phase'.
+    """
+    if request.method == "POST":
+        form = ScheduleUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            scenario_name = form.cleaned_data['scenario_name']
+            csv_file = request.FILES['csv_file']
+
+            # 1. Safety Check
+            if not csv_file.name.endswith('.csv'):
+                messages.error(request, "Error: Please upload a CSV file.")
+                return render(request, 'dashboard/upload_schedule.html', {'form': form})
+
+            # Create Scenario
+            scenario = ScheduleScenario.objects.create(name=scenario_name)
+
+            try:
+                # 2. Decode and Read Line-by-Line
+                decoded_file = csv_file.read().decode('utf-8').splitlines()
+                
+                # 3. Find the Header Row dynamically
+                # We look for the row that starts with 'Period Number'
+                header_row_index = -1
+                for i, line in enumerate(decoded_file):
+                    if 'Period Number' in line:
+                        header_row_index = i
+                        break
+                
+                if header_row_index == -1:
+                    raise Exception("Could not find the 'Period Number' header row.")
+
+                # 4. Parse Data starting from the header row
+                # We join the rest of the lines back into a string for DictReader
+                data_content = "\n".join(decoded_file[header_row_index:])
+                io_string = io.StringIO(data_content)
+                reader = csv.DictReader(io_string)
+
+                count = 0
+                for row in reader:
+                    # Skip empty rows (sometimes exist at bottom of Excel exports)
+                    if not row.get('Period Number'):
+                        continue
+
+                    try:
+                        # CLEANING FUNCTIONS
+                        def clean_num(value):
+                            if not value: return 0.0
+                            return float(str(value).replace(',', '').strip())
+
+                        def clean_date(value):
+                            # Handle dd/mm/yyyy
+                            return datetime.strptime(value.strip(), '%d/%m/%Y').date()
+
+                        # MAPPING
+                        # We map 'Mining Location' -> 'phase_name'
+                        # We map 'avarge' -> 'grade'
+                        MaterialSchedule.objects.create(
+                            scenario=scenario,
+                            period=int(row['Period Number']),
+                            phase_name=row.get('Mining Location', 'Unknown'), # Uses CSV Location as Phase
+                            
+                            start_date=clean_date(row['Start Date']),
+                            end_date=clean_date(row['End Date']),
+                            
+                            source=row.get('Mining Location', ''),
+                            destination=row.get('Mining Location', ''), # Or map to a destination if exists
+                            
+                            material_type=row.get('Material', 'waste').lower(),
+                            
+                            volume=clean_num(row.get('Volume', 0)),
+                            mass=clean_num(row.get('Mass', 0)),
+                            haul_distance=clean_num(row.get('Length', 0)),
+                            
+                            # Handle the typo 'avarge' from your specific CSV
+                            grade=clean_num(row.get('avarge', 0)) 
+                        )
+                        count += 1
+                    except Exception as e:
+                        print(f"Skipping row {count}: {e}")
+                        continue
+
+                messages.success(request, f"Success! Uploaded {count} schedule records from '{csv_file.name}'.")
+                return redirect('schedule_dashboard')
+
+            except Exception as e:
+                messages.error(request, f"Upload Failed: {str(e)}")
+                # scenario.delete() # Optional: delete if empty
+                return render(request, 'dashboard/upload_schedule.html', {'form': form})
+            
+    else:
+        form = ScheduleUploadForm()
+
+    return render(request, 'dashboard/upload_schedule.html', {'form': form})
+
+# dashboard/views.py
+
+def auto_update_phase_targets():
+    """
+    Scans the uploaded Schedule CSV and updates the 'Expected' values
+    for every active MinePhase automatically.
+    """
+    # 1. Get the latest schedule scenario
+    scenario = ScheduleScenario.objects.last()
+    if not scenario:
+        return
+
+    # 2. Loop through all your defined Phases
+    phases = MinePhase.objects.all()
+    
+    for phase in phases:
+        # 3. Find matching rows in the CSV Schedule
+        # We match strictly by name (e.g., CSV 'Phase 1' == Model 'Phase 1')
+        schedule_rows = MaterialSchedule.objects.filter(
+            scenario=scenario, 
+            phase_name__iexact=phase.name  # Case-insensitive match
+        )
+        
+        if schedule_rows.exists():
+            # 4. Calculate Targets automatically
+            total_waste = schedule_rows.filter(material_type='waste').aggregate(Sum('mass'))['mass__sum'] or 0
+            
+            # For Ore, we might sum Low, Medium, and High grades
+            total_ore = schedule_rows.exclude(material_type='waste').aggregate(Sum('mass'))['mass__sum'] or 0
+            
+            # Calculate Average Planned Grade (Weighted Average)
+            # (Mass * Grade) / Total Mass
+            weighted_grade_sum = 0
+            total_mass_for_grade = 0
+            
+            for row in schedule_rows.exclude(material_type='waste'):
+                weighted_grade_sum += (row.mass * row.grade)
+                total_mass_for_grade += row.mass
+                
+            avg_grade = (weighted_grade_sum / total_mass_for_grade) if total_mass_for_grade > 0 else 0
+
+            # 5. SAVE to the Phase Model (Overwriting manual entry)
+            phase.expected_tonnage = total_ore + total_waste # Total movement target
+            phase.expected_grade = avg_grade
+            phase.save()
+            
+            # Optional: You could save split targets (Ore vs Waste) if you added those fields to MinePhase
+
+def schedule_dashboard_view(request):
+    """
+    Visualizes the Planning Data (The Targets).
+    """
+    scenario = ScheduleScenario.objects.last()
+    if not scenario:
+        return redirect('upload_schedule')
+
+    schedules = MaterialSchedule.objects.filter(scenario=scenario).order_by('period')
+    periods = list(schedules.values_list('period', flat=True).distinct().order_by('period'))
+
+    # Prepare Chart Data
+    waste_data = []
+    low_data = []
+    med_data = []
+    high_data = []
+
+    for p in periods:
+        period_recs = schedules.filter(period=p)
+        waste_data.append(period_recs.filter(material_type='waste').aggregate(Sum('mass'))['mass__sum'] or 0)
+        low_data.append(period_recs.filter(material_type='low_grade').aggregate(Sum('mass'))['mass__sum'] or 0)
+        med_data.append(period_recs.filter(material_type='medium_grade').aggregate(Sum('mass'))['mass__sum'] or 0)
+        high_data.append(period_recs.filter(material_type='high_grade').aggregate(Sum('mass'))['mass__sum'] or 0)
+
+    context = {
+        'scenario': scenario,
+        'schedules': schedules,
+        'periods': periods,
+        'waste_data': waste_data,
+        'low_data': low_data,
+        'med_data': med_data,
+        'high_data': high_data,
+    }
+    return render(request, 'dashboard/schedule_view.html', context)
+
+def reconciliation_view(request):
+    """
+    Professional Reconciliation: Compares Planned (CSV) vs Actual (ProductionRecords).
+    """
+    scenario = ScheduleScenario.objects.last()
+    if not scenario:
+        return render(request, 'dashboard/reconciliation.html', {'error': 'No Schedule Found'})
+
+    # 1. Get the Plan
+    planned_items = MaterialSchedule.objects.filter(scenario=scenario).order_by('period')
+    periods = planned_items.values_list('period', flat=True).distinct().order_by('period')
+
+    reconciliation_data = []
+
+    for period in periods:
+        # Get date range for this period from the plan
+        p_items = planned_items.filter(period=period)
+        start_date = p_items.first().start_date
+        end_date = p_items.first().end_date
+
+        # 2. Get the Actuals (ProductionRecords) for this specific timeframe
+        actuals_qs = ProductionRecord.objects.filter(
+            timestamp__date__gte=start_date, 
+            timestamp__date__lte=end_date
+        )
+
+        # 3. Sum Actuals by Category
+        actual_sums = defaultdict(float)
+        for record in actuals_qs:
+            # Re-use the logic from your Mass Analysis to categorize
+            cat = 'waste'
+            if record.material_type == 'ore':
+                if record.grade < 1.5: cat = 'low_grade'
+                elif record.grade < 2.5: cat = 'medium_grade' # Matches your mass analysis logic
+                else: cat = 'high_grade'
+            
+            actual_sums[cat] += record.tonnage
+
+        # 4. Compare Plan vs Actual
+        for item in p_items:
+            planned_mass = item.mass
+            actual_mass = actual_sums.get(item.material_type, 0)
+            variance = actual_mass - planned_mass
+            
+            pct = (variance / planned_mass * 100) if planned_mass > 0 else 0
+
+            reconciliation_data.append({
+                'period': item.period,
+                'dates': f"{start_date.strftime('%d %b')} - {end_date.strftime('%d %b')}",
+                'material': item.get_material_type_display(),
+                'planned': planned_mass,
+                'actual': actual_mass,
+                'variance': variance,
+                'var_pct': pct,
+            })
+
+    context = {
+        'scenario': scenario,
+        'reconciliation_data': reconciliation_data
+    }
+    return render(request, 'dashboard/reconciliation.html', context)
