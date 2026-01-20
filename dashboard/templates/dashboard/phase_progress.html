@@ -1,210 +1,263 @@
-{% extends "dashboard/base.html" %}
-{% load static %}
-{% load custom_tags %}
+{% extends 'dashboard/base.html' %}
+{% load humanize %}
 
-
-
-
-{% block title %}Pit Phase Progress Dashboard{% endblock %}
+{% block title %}Pit Phase Dashboard{% endblock %}
 
 {% block content %}
-<div class="container-fluid mt-4">
+<div class="container-fluid">
 
-    <!-- Header with Action Button -->
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="text-light bg-dark p-3 rounded shadow">⛏️ Pit Phase Progress Dashboard</h2>
-        <a href="{% url 'add-phaseschedule' %}" class="btn btn-warning fw-semibold shadow-sm px-3 py-1" style="border-radius: 6px;">
-            ➕ Add Phase
-        </a>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-0 text-white">⛏️ Pit Phase Progress</h1>
+            <p class="mb-0 text-white-50 small">Real-time tracking: Plan vs. Actuals</p>
+        </div>
+        <div>
+            <a href="{% url 'auto_generate_phases' %}" class="btn btn-sm btn-info shadow-sm me-2">
+                <i class="fas fa-magic fa-sm text-white"></i> Auto-Detect
+            </a>
+            <a href="{% url 'add-phaseschedule' %}" class="btn btn-sm btn-primary shadow-sm">
+                <i class="fas fa-plus fa-sm text-white-50"></i> Manual Add
+            </a>
+        </div>
     </div>
 
-    <!-- Progress Map -->
-    <div class="card bg-dark text-light p-3 mb-4 shadow">
-        <h5>Progress Map</h5>
+    <div class="card bg-dark text-white p-3 mb-4 shadow border border-secondary">
+        <h5 class="text-primary mb-3">Progress Map (3D Visualization)</h5>
         <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 
         {% if pit_map_img %}
-            <div style="width: 100%; height: 600px;">
+            <div style="width: 100%; height: 500px;">
                 {{ pit_map_img|safe }}
             </div>
         {% else %}
-            <p class="text-warning p-3">Pit map not available. Check 'pit_design.str'.</p>
+            <div class="text-center p-5 border border-secondary rounded">
+                <i class="fas fa-map-marked-alt fa-3x mb-3 text-muted"></i>
+                <p class="text-white-50">
+                    Pit map visualization not available.<br>
+                    <small>Ensure <code>pit_design.str</code> is in <code>dashboard/static/data/</code></small>
+                </p>
+            </div>
         {% endif %}
     </div>
 
-    <!-- Summary Stats -->
-    <div class="row text-center mb-4">
-        <div class="col-md-3 mb-3">
-            <div class="card bg-dark text-light p-3 shadow">
-                <h6>Total Phases</h6>
-                <h3>{{ phases|length }}</h3>
+    <div class="row mb-4">
+        <div class="col-xl-4 col-md-6 mb-4">
+            <div class="card border-left-primary shadow h-100 py-2 bg-dark text-white">
+                <div class="card-body">
+                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Total Planned</div>
+                    <div class="h5 mb-0 font-weight-bold">{{ total_planned|floatformat:0|intcomma }} t</div>
+                </div>
             </div>
         </div>
-        <div class="col-md-3 mb-3">
-            <div class="card bg-dark text-light p-3 shadow">
-                <h6>Active Phases</h6>
-                <h3>{{ active_phases_count }}</h3>
+        <div class="col-xl-4 col-md-6 mb-4">
+            <div class="card border-left-success shadow h-100 py-2 bg-dark text-white">
+                <div class="card-body">
+                    <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Total Actual</div>
+                    <div class="h5 mb-0 font-weight-bold">{{ total_actual|floatformat:0|intcomma }} t</div>
+                </div>
             </div>
         </div>
-        <div class="col-md-3 mb-3">
-            <div class="card bg-dark text-light p-3 shadow">
-                <h6>Completed Phases</h6>
-                <h3>{{ completed_phases_count }}</h3>
+        <div class="col-xl-4 col-md-6 mb-4">
+            <div class="card border-left-warning shadow h-100 py-2 bg-dark text-white">
+                <div class="card-body">
+                    <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Total Variance</div>
+                    <div class="h5 mb-0 font-weight-bold {% if total_variance >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        {% if total_variance > 0 %}+{% endif %}{{ total_variance|floatformat:0|intcomma }} t
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Progress Table -->
-    <div class="card bg-secondary p-3 text-light mb-4 shadow">
-        <h5>Phase Progress Overview</h5>
+    <div class="card shadow mb-4 bg-dark text-white">
+        <div class="card-header py-3 bg-dark border-bottom border-secondary">
+            <h6 class="m-0 font-weight-bold text-primary">Phase Performance Chart</h6>
+        </div>
+        <div class="card-body">
+            <div class="chart-bar" style="height: 400px;">
+                <canvas id="phaseTonnageChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
         {% for p in phases %}
-        <div class="mb-3">
-            <strong>{{ p.mine_phase.pit }} - {{ p.mine_phase.name }}</strong>
-            <div class="progress" style="height: 20px;">
-                <div class="progress-bar 
-                    {% if p.status == 'completed' %}bg-success
-                    {% elif p.status == 'active' %}bg-warning
-                    {% else %}bg-info{% endif %}"
-                    role="progressbar"
-                    style="width: {{ p.current_progress }}%;">
-                    {{ p.current_progress }}%
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow mb-4 bg-dark text-white {% if p.status == 'active' %}border-primary{% else %}border-secondary{% endif %}">
+                <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between bg-secondary border-bottom border-dark">
+                    <h6 class="m-0 font-weight-bold text-white">{{ p.mine_phase.name }}</h6>
+                    {% if p.status == 'active' %}
+                        <span class="badge bg-primary px-3 py-2"><i class="fas fa-hammer me-1"></i> ACTIVE</span>
+                    {% elif p.status == 'completed' %}
+                        <span class="badge bg-success">COMPLETED</span>
+                    {% else %}
+                        <span class="badge bg-secondary">PLANNED</span>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    <div class="row text-center mb-4">
+                        <div class="col-6 border-end border-secondary">
+                            <div class="small text-uppercase text-white-50 mb-1">Target</div>
+                            <div class="h5 font-weight-bold" style="color: #66b3ff;">
+                                {{ p.planned_tonnage|floatformat:0|intcomma }} t
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="small text-uppercase text-white-50 mb-1">Removed</div>
+                            <div class="h5 font-weight-bold text-warning">{{ p.removed_tonnage|floatformat:0|intcomma }} t</div>
+                        </div>
+                    </div>
+                    <h4 class="small font-weight-bold text-white">Advancement <span class="float-end">{{ p.current_progress }}%</span></h4>
+                    <div class="progress mb-2 bg-secondary" style="height: 20px;">
+                        <div class="progress-bar {% if p.current_progress >= 100 %}bg-success{% else %}bg-primary{% endif %} progress-bar-striped progress-bar-animated" role="progressbar" style="width: {{ p.current_progress }}%"></div>
+                    </div>
                 </div>
             </div>
-            <small>
-                Status: <b>{{ p.status|title }}</b> |
-                Planned: {{ p.planned_tonnage }}t |
-                Removed: {{ p.removed_tonnage }}t
-            </small>
         </div>
-        {% empty %}
-        <p>No phase progress data available.</p>
         {% endfor %}
     </div>
 
-    <!-- Charts Section -->
-    <div class="row">
-        <div class="col-md-6 mb-4">
-            <div class="card bg-dark text-light p-3 shadow">
-                <h5>Tonnage Moved vs. Planned</h5>
-                <canvas id="tonnageChart" height="220"></canvas>
-            </div>
-        </div>
-        <div class="col-md-6 mb-4">
-            <div class="card bg-dark text-light p-3 shadow">
-                <h5>Progress by Phase (%)</h5>
-                <canvas id="progressChart" height="220"></canvas>
-            </div>
-        </div>
-        <div class="col-md-12 mb-4">
-            <div class="card bg-dark text-light p-3 shadow">
-                <h5>Ore vs. Waste Movement</h5>
-                <canvas id="oreWasteChart" height="220"></canvas>
-            </div>
+    <div class="card bg-dark text-white p-3 shadow mb-5">
+        <h5 class="text-danger mb-3 border-bottom border-secondary pb-2">Variance Summary (Detailed Logs)</h5>
+        <div class="table-responsive">
+            <table class="table table-dark table-hover table-sm">
+                <thead>
+                    <tr class="text-warning text-center">
+                        <th class="text-start" style="width: 30%;">Phase / Date</th>
+                        <th class="text-end" style="color: #66b3ff;">Target (t)</th>
+                        <th class="text-end">Actual (t)</th>
+                        <th class="text-end">Variance (t)</th>
+                        <th class="text-end">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in phases %}
+                    
+                    <tr class="fw-bold bg-secondary" style="border-top: 2px solid #777;">
+                        <td class="text-warning text-start ps-2">
+                            <i class="fas fa-layer-group me-2"></i>{{ p.mine_phase.name }} (TOTAL)
+                        </td>
+                        <td class="text-end" style="color: #66b3ff;">
+                            {{ p.planned_tonnage|floatformat:0|intcomma }}
+                        </td>
+                        <td class="text-end text-warning">{{ p.removed_tonnage|floatformat:0|intcomma }}</td>
+                        <td class="text-end text-white">
+                            {{ p.removed_tonnage|add:p.planned_tonnage|floatformat:0|intcomma }} (Diff)
+                        </td>
+                        <td class="text-end">
+                            <span class="badge bg-primary">Phase Summary</span>
+                        </td>
+                    </tr>
+
+                    {% for record in p.mine_phase.production_records.all %}
+                    <tr style="font-size: 0.9rem; color: #ccc;">
+                        <td class="text-start ps-5 border-start border-secondary">
+                            <i class="fas fa-calendar-day me-2 text-muted"></i>
+                            {{ record.timestamp|date:"d M Y" }}
+                        </td>
+                        
+                        <td class="text-end" style="color: #66b3ff;">
+                            {{ record.expected_tonnage|default:"-"|floatformat:0|intcomma }}
+                        </td>
+                        
+                        <td class="text-end text-white">
+                            {{ record.tonnage|floatformat:0|intcomma }}
+                        </td>
+                        <td class="text-end fw-bold {% if record.variance >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            {% if record.variance > 0 %}+{% endif %}{{ record.variance|floatformat:0|intcomma }}
+                        </td>
+                        <td class="text-end">
+                            {% if record.variance < 0 %}
+                                <span class="badge bg-danger" style="font-size: 0.7em">Underbreak</span>
+                            {% elif record.variance > 0 %}
+                                <span class="badge bg-success" style="font-size: 0.7em">Overbreak</span>
+                            {% else %}
+                                <span class="badge bg-secondary" style="font-size: 0.7em">Balanced</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center text-muted small ps-5 fst-italic">
+                            No daily records found for this phase yet.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 
-    <!-- Variance Summary Table -->
-    <div class="card bg-dark text-light p-3 shadow mb-5">
-        <h5>Variance Summary (Removed - Planned)</h5>
-        <table class="table table-dark table-striped table-hover">
-            <thead>
-                <tr>
-                    <th>Phase</th>
-                    <th>Planned (t)</th>
-                    <th>Removed (t)</th>
-                    <th>Variance (t)</th>
-                    <th>%</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for p in phases %}
-                <tr>
-                    <td>{{ p.mine_phase.name }}</td>
-                    <td>{{ p.planned_tonnage }}</td>
-                    <td>{{ p.removed_tonnage }}</td>
-                    <td class="{% if variance|index:forloop.counter0 >= 0 %}text-success{% else %}text-danger{% endif %}">
-                        {{ variance|index:forloop.counter0|floatformat:2 }}
-                    </td>
-                    <td>{{ variance_percent|index:forloop.counter0|floatformat:2 }}%</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
 </div>
 
-<!-- Chart Data -->
-{{ phase_names|json_script:"phaseNames" }}
-{{ planned_tonnage|json_script:"plannedTonnage" }}
-{{ removed_tonnage|json_script:"removedTonnage" }}
-{{ variance|json_script:"variance" }}
-{{ progress_percentages|json_script:"progressPercentages" }}
-{{ ore_movement|json_script:"oreMovement" }}
-{{ waste_movement|json_script:"wasteMovement" }}
+{{ phase_names|json_script:"phaseNamesData" }}
+{{ planned_tonnage|json_script:"plannedData" }}
+{{ ore_movement|json_script:"oreData" }}
+{{ waste_movement|json_script:"wasteData" }}
+{{ variance|json_script:"varianceData" }}
 
-<!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-const phaseNames = JSON.parse(document.getElementById('phaseNames').textContent);
-const plannedTonnage = JSON.parse(document.getElementById('plannedTonnage').textContent);
-const removedTonnage = JSON.parse(document.getElementById('removedTonnage').textContent);
-const variance = JSON.parse(document.getElementById('variance').textContent);
-const progressPercentages = JSON.parse(document.getElementById('progressPercentages').textContent);
-const oreMovement = JSON.parse(document.getElementById('oreMovement').textContent);
-const wasteMovement = JSON.parse(document.getElementById('wasteMovement').textContent);
+    document.addEventListener("DOMContentLoaded", function() {
+        const phaseNames = JSON.parse(document.getElementById('phaseNamesData').textContent || '[]');
+        const plannedData = JSON.parse(document.getElementById('plannedData').textContent || '[]');
+        const oreData = JSON.parse(document.getElementById('oreData').textContent || '[]');
+        const wasteData = JSON.parse(document.getElementById('wasteData').textContent || '[]');
+        const varianceData = JSON.parse(document.getElementById('varianceData').textContent || '[]');
 
-const varianceColors = variance.map(v => v >= 0 ? 'rgba(76, 175, 80, 1)' : 'rgba(244, 67, 54, 1)');
-
-// --- Tonnage Chart ---
-new Chart(document.getElementById('tonnageChart'), {
-    type: 'bar',
-    data: {
-        labels: phaseNames,
-        datasets: [
-            { label: 'Planned Tonnage (t)', data: plannedTonnage, backgroundColor: '#00bcd4' },
-            { label: 'Removed Tonnage (t)', data: removedTonnage, backgroundColor: '#4caf50' },
-            {
-                label: 'Variance (Removed - Planned)',
-                data: variance,
-                type: 'line',
-                borderColor: varianceColors,
-                borderWidth: 2,
-                fill: false,
-                tension: 0.3
+        const ctx = document.getElementById('phaseTonnageChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: phaseNames,
+                datasets: [
+                    {
+                        label: 'Planned Tonnage',
+                        data: plannedData,
+                        backgroundColor: 'rgba(78, 115, 223, 0.5)',
+                        borderColor: '#4e73df',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Actual Ore',
+                        data: oreData,
+                        backgroundColor: 'rgba(28, 200, 138, 0.6)',
+                        borderColor: '#1cc88a',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Actual Waste',
+                        data: wasteData,
+                        backgroundColor: 'rgba(246, 194, 62, 0.6)',
+                        borderColor: '#f6c23e',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Variance',
+                        data: varianceData,
+                        type: 'line',
+                        borderColor: '#e74a3b',
+                        borderWidth: 2,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                maintainAspectRatio: false,
+                scales: {
+                    x: { ticks: { color: '#fff' } },
+                    y: { 
+                        grid: { color: '#444' }, 
+                        ticks: { color: '#fff', callback: function(value) { return value.toLocaleString() + ' t'; } } 
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#fff' } }
+                }
             }
-        ]
-    },
-    options: { responsive: true, scales: { y: { beginAtZero: true } } }
-});
-
-// --- Progress Chart ---
-new Chart(document.getElementById('progressChart'), {
-    type: 'line',
-    data: {
-        labels: phaseNames,
-        datasets: [
-            { label: 'Progress (%)', data: progressPercentages, borderColor: '#ff9800', fill: false, tension: 0.4 }
-        ]
-    },
-    options: {
-        scales: { y: { beginAtZero: true, max: 100 } }
-    }
-});
-
-// --- Ore vs Waste Chart ---
-new Chart(document.getElementById('oreWasteChart'), {
-    type: 'bar',
-    data: {
-        labels: phaseNames,
-        datasets: [
-            { label: 'Ore (t)', data: oreMovement, backgroundColor: '#2196f3' },
-            { label: 'Waste (t)', data: wasteMovement, backgroundColor: '#f44336' }
-        ]
-    },
-    options: {
-        indexAxis: 'y',
-        scales: { x: { beginAtZero: true } }
-    }
-});
+        });
+    });
 </script>
 {% endblock %}

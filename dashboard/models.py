@@ -240,9 +240,13 @@ class PhaseSchedule(models.Model):
         return round(min(100, (self.removed_tonnage / self.planned_tonnage) * 100), 1)
 
     def update_status(self):
-        if self.current_progress == 0: self.status = 'planned'
-        elif self.current_progress < 100: self.status = 'active'
-        else: self.status = 'completed'
+        # FIX: Check raw tonnage first, not the rounded percentage
+        if self.removed_tonnage > 0 and self.current_progress < 100:
+            self.status = 'active'  # It switches to Active the moment you move 1 tonne
+        elif self.current_progress >= 100:
+            self.status = 'completed'
+        else:
+            self.status = 'planned'
 
     def __str__(self):
         return f"{self.mine_phase} - {self.status}"

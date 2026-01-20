@@ -40,6 +40,17 @@
                             {{ form.pit_name }}
                         </div>
 
+                        <div class="mb-4 p-3 border border-secondary rounded bg-secondary">
+                            <label class="form-label font-weight-bold text-warning">
+                                <i class="fas fa-edit mr-1"></i> Target Tonnage (Manual Override)
+                            </label>
+                            {{ form.expected_tonnage }}
+                            <small class="text-white-50">
+                                If "Auto-Sync" shows 0, type the target here (e.g. 4500000). 
+                                Leave blank to use CSV data.
+                            </small>
+                        </div>
+
                         <div class="row">
                             <div class="col-md-6 mb-4">
                                 <label class="form-label text-white">Planned Start</label>

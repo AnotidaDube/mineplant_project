@@ -19,6 +19,7 @@ from django.db.models import Sum
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.timezone import make_aware
+from django.db import models
 # ReportLab imports for Server-Side PDF generation
 from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -276,76 +277,90 @@ def generate_pit_map_base64(parsed_phases):
 
 def phase_progress_view(request):
     """
-    Combines Schedule data with Pit Design map.
+    Combines Schedule data, Pit Design map, and Production KPIs.
     """
+    # 1. Fetch Phases
     phases = PhaseSchedule.objects.select_related('mine_phase').all().order_by('mine_phase__sequence_order')
 
-    # Update dynamic fields
+    # 2. Update Dynamic Fields (Critical for Status: Planned -> Active)
     for p in phases:
         p.update_removed_tonnage()
 
     active_phases = phases.filter(status='active')
     completed_phases = phases.filter(status='completed')
 
-    # Chart Data Preparation
-    phase_names = [p.mine_phase.name for p in phases]
-    planned_tonnage = [p.planned_tonnage for p in phases]
-    removed_tonnage = [p.removed_tonnage for p in phases]
-    progress_percentages = [p.current_progress for p in phases]
-
-    # Variance Data for Table
-    variance_data = []
-    for p in phases:
-        planned = p.planned_tonnage
-        removed = p.removed_tonnage
-        var = removed - planned
-        var_pct = ((removed - planned) / planned) * 100 if planned else None
-
-        variance_data.append({
-            'phase': p.mine_phase.name,
-            'planned': planned,
-            'removed': removed,
-            'variance': round(var, 2),
-            'variance_percent': round(var_pct, 2) if var_pct is not None else None,
-        })
-
-    # Movement Data
+    # 3. Prepare Lists for Charts
+    phase_names = []
+    planned_tonnage = []
+    removed_tonnage = []
+    progress_percentages = []
+    
     ore_movement = []
     waste_movement = []
+    variance_list = [] # Flat list for the Chart Line
+
     for p in phases:
-        records = p.mine_phase.production_records
+        phase_names.append(p.mine_phase.name)
+        planned_tonnage.append(p.planned_tonnage)
+        removed_tonnage.append(p.removed_tonnage)
+        progress_percentages.append(p.current_progress)
+
+        # Calculate Ore vs Waste Split
+        records = p.mine_phase.production_records.all()
         ore = records.filter(material_type='ore').aggregate(Sum('tonnage'))['tonnage__sum'] or 0
         waste = records.filter(material_type='waste').aggregate(Sum('tonnage'))['tonnage__sum'] or 0
+        
         ore_movement.append(round(ore, 2))
         waste_movement.append(round(waste, 2))
 
-    # Pit Map Generation
+        # Calculate Variance for this phase
+        var = p.removed_tonnage - p.planned_tonnage
+        variance_list.append(var)
+
+    # 4. Calculate KPI Totals (For Top Cards)
+    total_planned = sum(planned_tonnage)
+    total_actual = sum(removed_tonnage)
+    total_variance = total_actual - total_planned
+
+    # 5. Pit Map Generation (Your existing logic)
     str_file = os.path.join(settings.BASE_DIR, 'dashboard', 'static', 'data', 'pit_design.str')
-    # Fallback path if using standard static layout
     if not os.path.exists(str_file):
         str_file = os.path.join(os.path.dirname(__file__), 'static', 'data', 'pit_design.str')
 
     pit_map_img = None
     if os.path.exists(str_file):
-        parsed_phases = parse_str_file(str_file)
-        pit_map_img = generate_pit_map_base64(parsed_phases)
+        try:
+            parsed_phases = parse_str_file(str_file)
+            pit_map_img = generate_pit_map_base64(parsed_phases)
+        except Exception as e:
+            print(f"Error generating pit map: {e}")
 
+    # 6. Context
     context = {
+        # Querysets
         "phases": phases,
         "active_phases_count": active_phases.count(),
         "completed_phases_count": completed_phases.count(),
+        
+        # KPI Totals
+        "total_planned": total_planned,
+        "total_actual": total_actual,
+        "total_variance": total_variance,
+
+        # Chart Data Lists
         "phase_names": phase_names,
         "planned_tonnage": planned_tonnage,
         "removed_tonnage": removed_tonnage,
         "progress_percentages": progress_percentages,
         "ore_movement": ore_movement,
         "waste_movement": waste_movement,
-        "variance_data": variance_data,
+        "variance": variance_list, # The chart needs this specific flat list
+        
+        # Visuals
         "pit_map_img": pit_map_img,
     }
 
     return render(request, 'dashboard/phase_progress.html', context)
-
 
 def pit_map_view(request):
     """
@@ -381,81 +396,6 @@ def pit_map_view(request):
     }
 
     return render(request, 'dashboard/pit_preview.html', context)
-
-
-# dashboard/views.py
-from django.db.models import Sum
-
-def pit_phase_dashboard(request):
-    # ==========================================
-    # 1. FORCE RE-CALCULATION (The Fix)
-    # ==========================================
-    phases = MinePhase.objects.all()
-    scenario = ScheduleScenario.objects.last()
-
-    if scenario:
-        for phase in phases:
-            # We try to find schedule rows that match the Phase Name
-            # We use 'iexact' to ignore Capital/small letter differences
-            match_rows = MaterialSchedule.objects.filter(
-                scenario=scenario, 
-                phase_name__iexact=phase.name
-            )
-
-            # Calculate the total Mass from those rows
-            total_planned = match_rows.aggregate(Sum('mass'))['mass__sum'] or 0
-            
-            # Calculate Grade (Weighted Average)
-            total_grade_mass = 0
-            weighted_grade = 0
-            for row in match_rows:
-                if row.mass > 0:
-                    weighted_grade += (row.grade * row.mass)
-                    total_grade_mass += row.mass
-            
-            avg_grade = (weighted_grade / total_grade_mass) if total_grade_mass > 0 else 0
-
-            # FORCE SAVE the new numbers to the Phase
-            phase.expected_tonnage = total_planned
-            phase.expected_grade = avg_grade
-            phase.save()
-
-    # ==========================================
-    # 2. STANDARD DASHBOARD LOGIC
-    # ==========================================
-    # Get the schedule wrappers (PhaseSchedule)
-    phase_schedules = PhaseSchedule.objects.select_related('mine_phase').all().order_by('mine_phase__sequence_order')
-    
-    # Calculate KPIs for the top of the page
-    total_planned = sum(p.mine_phase.expected_tonnage for p in phases if p.expected_tonnage)
-    total_actual = sum(p.removed_tonnage for p in phase_schedules)
-    total_variance = total_actual - total_planned
-
-    # Prepare Chart Data
-    phase_names = [p.mine_phase.name for p in phase_schedules]
-    planned_data = [p.mine_phase.expected_tonnage for p in phase_schedules]
-    actual_ore = [] # (You can expand this logic later if needed)
-    actual_waste = []
-    
-    # Simple actuals for the chart
-    for p in phase_schedules:
-        actual_ore.append(p.removed_tonnage) # Simplified for now
-        actual_waste.append(0)
-
-    context = {
-        'phases': phase_schedules,
-        'total_planned': total_planned,
-        'total_actual': total_actual,
-        'total_variance': total_variance,
-        'phase_names': phase_names,
-        'planned_tonnage': planned_data,
-        'actual_ore': actual_ore,
-        'actual_waste': actual_waste,
-        'variance_total': [a - p for a, p in zip(actual_ore, planned_data)]
-    }
-
-    return render(request, 'dashboard/pit_phase_dashboard.html', context)
-
 
 def pit_data(request):
     """API endpoint to return raw Pit Data JSON."""
@@ -613,9 +553,8 @@ def add_plantdemand(request):
 # dashboard/views.py
 
 def add_phaseschedule(request):
-    # Get list of phase names found in the CSV (for auto-suggestions)
-    # This helps the user type exactly what is in the plan
-    scenario = ScheduleScenario.objects.last()
+    # Smart Scenario Look-up for autocomplete
+    scenario = ScheduleScenario.objects.annotate(c=Count('schedules')).filter(c__gt=0).last()
     suggested_names = []
     if scenario:
         suggested_names = MaterialSchedule.objects.filter(scenario=scenario)\
@@ -626,35 +565,40 @@ def add_phaseschedule(request):
         if form.is_valid():
             p_name = form.cleaned_data['phase_name']
             pit_name = form.cleaned_data['pit_name']
+            manual_tonnage = form.cleaned_data['expected_tonnage'] # <--- NEW
             start = form.cleaned_data['planned_start']
             end = form.cleaned_data['planned_end']
 
-            # 1. Get or Create the MinePhase
-            # This saves you from going to the Admin Panel!
+            # 1. Create the Phase
             phase, created = MinePhase.objects.get_or_create(
                 name=p_name,
-                defaults={
-                    'pit': pit_name,
-                    'phase_number': 1, # Default, you can edit later if needed
-                    'sequence_order': 1
-                }
+                defaults={'pit': pit_name, 'phase_number': 1, 'sequence_order': 1}
             )
 
-            # 2. Create/Update the Schedule for it
+            # 2. Handle Tonnage (Manual vs Auto)
+            if manual_tonnage and manual_tonnage > 0:
+                # OPTION A: User typed a number manually
+                phase.expected_tonnage = manual_tonnage
+                phase.save()
+                final_tonnage = manual_tonnage
+            else:
+                # OPTION B: Auto-sync from CSV
+                auto_update_phase_targets() # Run the sync
+                phase.refresh_from_db()     # Reload to get the synced number
+                final_tonnage = phase.expected_tonnage or 0
+
+            # 3. Create the Schedule
             PhaseSchedule.objects.update_or_create(
                 mine_phase=phase,
                 defaults={
                     'planned_start': start,
                     'planned_end': end,
-                    'status': 'active' # Auto-set to active so it glows blue
+                    'planned_tonnage': final_tonnage, # Use the final determined number
+                    'status': 'active'
                 }
             )
 
-            # 3. TRIGGER AUTO-CALCULATION
-            # This pulls the 48,000t target from the CSV immediately
-            auto_update_phase_targets()
-
-            messages.success(request, f"Phase '{p_name}' created and synced with Schedule!")
+            messages.success(request, f"Phase '{p_name}' created. Target: {final_tonnage:,.0f} tonnes.")
             return redirect('pit_phase_dashboard')
     else:
         form = PhaseScheduleForm()
@@ -663,7 +607,6 @@ def add_phaseschedule(request):
         'form': form,
         'suggested_names': suggested_names
     })
-
 
 @csrf_exempt
 def update_expected_values(request, phase_id):
@@ -783,6 +726,7 @@ def upload_schedule_view(request):
     """
     Robust Importer that handles 'MineSched' style CSVs with metadata headers.
     It automatically finds the header row and maps 'Mining Location' to 'Phase'.
+    INCLUDES: 'Ghost Scenario' cleanup (deletes scenario if upload fails).
     """
     if request.method == "POST":
         form = ScheduleUploadForm(request.POST, request.FILES)
@@ -795,7 +739,7 @@ def upload_schedule_view(request):
                 messages.error(request, "Error: Please upload a CSV file.")
                 return render(request, 'dashboard/upload_schedule.html', {'form': form})
 
-            # Create Scenario
+            # Create Scenario (We save it now, but delete it later if parsing fails)
             scenario = ScheduleScenario.objects.create(name=scenario_name)
 
             try:
@@ -867,8 +811,11 @@ def upload_schedule_view(request):
                 return redirect('schedule_dashboard')
 
             except Exception as e:
+                # --- GHOST SCENARIO CLEANUP ---
+                # If anything went wrong above, delete the empty/broken scenario
+                scenario.delete()
+                # ------------------------------
                 messages.error(request, f"Upload Failed: {str(e)}")
-                # scenario.delete() # Optional: delete if empty
                 return render(request, 'dashboard/upload_schedule.html', {'form': form})
             
     else:
@@ -1020,3 +967,104 @@ def reconciliation_view(request):
         'reconciliation_data': reconciliation_data
     }
     return render(request, 'dashboard/reconciliation.html', context)
+
+
+
+    """
+from django.http import HttpResponse
+
+def debug_connection(request):
+    scenario = ScheduleScenario.objects.last()
+    if not scenario:
+        return HttpResponse("No Schedule Scenario found!")
+
+    # 1. Get unique names from the CSV Data
+    csv_names = list(MaterialSchedule.objects.filter(scenario=scenario)
+                     .values_list('phase_name', flat=True).distinct())
+    
+    # 2. Get names you created
+    my_phases = list(MinePhase.objects.values_list('name', flat=True))
+
+    # 3. Check for matches
+    report = [f"<h1>DEBUG REPORT (Scenario: {scenario.name})</h1>"]
+    report.append(f"<h3>1. Found these names in your CSV:</h3><ul>")
+    for name in csv_names:
+        report.append(f"<li>'{name}' (Length: {len(str(name))})</li>")
+    report.append("</ul>")
+
+    report.append(f"<h3>2. Found these Phases you created:</h3><ul>")
+    for name in my_phases:
+        report.append(f"<li>'{name}' (Length: {len(str(name))})</li>")
+    report.append("</ul>")
+
+    report.append("<h3>3. Connection Test:</h3>")
+    for phase in MinePhase.objects.all():
+        count = MaterialSchedule.objects.filter(scenario=scenario, phase_name__iexact=phase.name).count()
+        total = MaterialSchedule.objects.filter(scenario=scenario, phase_name__iexact=phase.name).aggregate(models.Sum('mass'))['mass__sum']
+        
+        status = "✅ CONNECTED" if count > 0 else "❌ DISCONNECTED"
+        report.append(f"<p><strong>{phase.name}</strong>: Found {count} rows. Total Mass: {total}. [{status}]</p>")
+
+    return HttpResponse("".join(report))
+    """
+
+# dashboard/views.py
+
+def auto_generate_phases(request):
+    # 1. SMART SELECTION: Find the last scenario that actually has rows
+    scenario = ScheduleScenario.objects.annotate(
+        row_count=Count('schedules')
+    ).filter(row_count__gt=0).last()
+    
+    if not scenario:
+        messages.error(request, "No valid schedule data found! Please upload a CSV first.")
+        return redirect('upload_schedule')
+
+    unique_locations = MaterialSchedule.objects.filter(scenario=scenario)\
+        .values_list('phase_name', flat=True).distinct()
+
+    created_count = 0
+    
+    for loc_name in unique_locations:
+        if not loc_name or loc_name == 'Unknown': continue
+
+        # 2. Create Phase
+        phase, created = MinePhase.objects.get_or_create(
+            name=loc_name,
+            defaults={
+                'pit': 'Main Pit',
+                'phase_number': 1,
+                'sequence_order': 1
+            }
+        )
+
+        # 3. Force Sync Tonnage from CSV
+        match_rows = MaterialSchedule.objects.filter(scenario=scenario, phase_name=loc_name)
+        total_planned = match_rows.aggregate(models.Sum('mass'))['mass__sum'] or 0
+        
+        # 4. Sync Dates
+        first = match_rows.order_by('start_date').first()
+        last = match_rows.order_by('-end_date').first()
+
+        phase.expected_tonnage = total_planned
+        if first and last:
+            phase.planned_start = first.start_date
+            phase.planned_end = last.end_date
+        phase.save()
+
+        # 5. Create Visual Tracker
+        PhaseSchedule.objects.update_or_create(
+            mine_phase=phase,
+            defaults={
+                'planned_tonnage': total_planned,
+                'planned_start': phase.planned_start,
+                'planned_end': phase.planned_end,
+                'status': 'active'
+            }
+        )
+
+        if created:
+            created_count += 1
+
+    messages.success(request, f"Success! Connected to '{scenario.name}' and synced {created_count} phases.")
+    return redirect('pit_phase_dashboard')
