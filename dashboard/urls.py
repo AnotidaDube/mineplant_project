@@ -42,6 +42,7 @@ urlpatterns = [
     path('dashboard/add_oresample/', views.add_oresample, name='add-oresample'),
     path('dashboard/add_plantdemand/', views.add_plantdemand, name='add-plantdemand'),
     path('dashboard/add_phaseschedule/', views.add_phaseschedule, name='add-phaseschedule'),
+    path('dashboard/upload-blocks/', views.upload_block_model, name='upload_block_model'),
     
     # ==========================
     # 6. API & Utilities
@@ -50,4 +51,5 @@ urlpatterns = [
     path('export-pdf/', views.export_pdf, name='export-pdf'),
     path("pit-data/", views.pit_data, name="pit-data"),
     path('pit-map/', views.pit_map_view, name='pit_map'),
+    path('manage_plants/', views.manage_plants, name='manage-plants'),
 ]

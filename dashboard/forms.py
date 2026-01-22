@@ -2,25 +2,70 @@ from django import forms
 from django.core.exceptions import ValidationError
 from .models import ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule, MinePhase, Plant
 
-# ==========================================
-# 1. PLANT DEMAND FORM
-# ==========================================
+class PlantForm(forms.ModelForm):
+    class Meta:
+        model = Plant
+        fields = ['name']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Enter new plant name'})
+        }
+
+# 2. Updated Demand Form (Reads from the Plant List)
 class PlantDemandForm(forms.ModelForm):
+    # This automatically finds ALL plants you created in the "Manage Plants" page
     plant = forms.ModelChoiceField(
-        queryset=Plant.objects.all(),
-        empty_label="Select Plant",
+        queryset=Plant.objects.all().order_by('name'),
+        empty_label="Select a Plant...",
         widget=forms.Select(attrs={'class': 'form-control'})
     )
 
     class Meta:
         model = PlantDemand
-        fields = ['plant', 'timestamp', 'required_tonnage']
+        fields = ['timestamp', 'plant', 'required_tonnage']
         widgets = {
-            'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-control'})
+            'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-control'}),
+            'required_tonnage': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Target'}),
         }
 
-# ==========================================
-# 2. PRODUCTION RECORD FORM (Fixed Order)
+# 3. Updated Production Form (Reads from the Plant List)
+class ProductionRecordForm(forms.ModelForm):
+    # Dynamic Plant Selector
+    plant = forms.ModelChoiceField(
+        queryset=Plant.objects.all().order_by('name'),
+        empty_label="Select Destination Plant...",
+        widget=forms.Select(attrs={'class': 'form-control'})
+    )
+    
+    # Keep Phase as text if you prefer, or switch to ModelChoiceField if you have a Manage Phases page too
+    mine_phase_name = forms.CharField(
+        label="Mine Phase",
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Source Phase'})
+    )
+
+    class Meta:
+        model = ProductionRecord
+        fields = ['timestamp', 'material_type', 'tonnage']
+        widgets = {
+            'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-control'}),
+            'material_type': forms.Select(attrs={'class': 'form-control'}),
+            'tonnage': forms.NumberInput(attrs={'class': 'form-control'}),
+        }
+    
+    # (Clean method to link Phase name remains similar to before, but Plant is handled automatically now)
+    def clean(self):
+        cleaned_data = super().clean()
+        # Only need to resolve Phase manually now
+        p_name = cleaned_data.get('mine_phase_name')
+        if p_name:
+            # Assumes you have a PhaseSchedule model
+            phase = PhaseSchedule.objects.filter(mine_phase__name__iexact=p_name.strip()).first()
+            # If linking to simple MinePhase model, adjust accordingly
+            if not phase:
+                self.add_error('mine_phase_name', "Phase not found.")
+            else:
+                self.instance.mine_phase = phase.mine_phase
+                self.instance.plant = cleaned_data.get('plant') # Auto-linked by dropdown
+        return cleaned_data
 # ==========================================
 class ProductionRecordForm(forms.ModelForm):
     # 1. Custom Text Fields
@@ -184,4 +229,28 @@ class ScheduleUploadForm(forms.Form):
     csv_file = forms.FileField(
         label="Upload MineSched CSV",
         widget=forms.ClearableFileInput(attrs={'class': 'form-control'})
+    )
+
+from django import forms
+
+class BlockModelUploadForm(forms.Form):
+    # 1. The Pit Design (Strings)
+    pit_design_file = forms.FileField(
+        label="Pit Design File (.str)",
+        help_text="Upload your latest Surpac string file (e.g., pit_design.str)",
+        required=False
+    )
+    
+    # 2. The High Grade Ore (Gold)
+    ore_file = forms.FileField(
+        label="High Grade Ore CSV",
+        help_text="Export from Surpac using 'ore cutt of grade.con'. Columns: Y, X, Z",
+        required=False
+    )
+    
+    # 3. The Waste Rock (Grey)
+    waste_file = forms.FileField(
+        label="Waste/Rock CSV",
+        help_text="Export from Surpac using 'coooon.con'. Columns: Y, X, Z",
+        required=False
     )

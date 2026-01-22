@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 from datetime import datetime
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse, HttpResponseNotAllowed
-from django.db.models import Sum
+from django.db.models import Sum, Count
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.timezone import make_aware
@@ -38,7 +38,9 @@ from .forms import (
     PlantDemandForm, 
     StockpileForm, 
     PhaseScheduleForm, 
-    ExpectedValuesForm
+    ExpectedValuesForm,
+    BlockModelUploadForm,
+    PlantForm
 )
 from .models import (
     MinePhase, 
@@ -147,13 +149,18 @@ def mine_plant_dashboard(request):
     return render(request, 'dashboard/home.html')
 
 
+# Add this import at the top of views.py if not present
+from django.core.serializers.json import DjangoJSONEncoder 
+
 def production_vs_demand_view(request):
     """
     View for the Production vs Demand dashboard.
-    Handles both initial HTML render and AJAX data fetching.
+    FIXED: Uses DjangoJSONEncoder to prevent AJAX errors with Decimal numbers.
     """
-    # 1. AJAX Data Fetch for Charts
+    # 1. AJAX Data Fetch for Charts (The Graph & Log Table)
     if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        
+        # Get raw data values
         prod_data = list(ProductionRecord.objects.values('timestamp', 'tonnage', 'material_type', 'plant__name'))
         demand_data = list(PlantDemand.objects.values('timestamp', 'required_tonnage', 'plant__name'))
         
@@ -161,13 +168,20 @@ def production_vs_demand_view(request):
             "production": prod_data,
             "demand": demand_data
         }
-        return JsonResponse(data, safe=False)
+        
+        # CRITICAL FIX: encoder=DjangoJSONEncoder handles Decimal fields correctly
+        return JsonResponse(data, safe=False, encoder=DjangoJSONEncoder)
 
-    # 2. Standard Page Load
+    # 2. Standard Page Load (The Top Cards & Recent Tables)
+    recent_production = ProductionRecord.objects.select_related('plant').order_by('-timestamp')[:20]
+    recent_demand = PlantDemand.objects.select_related('plant').order_by('-timestamp')[:20]
+
     context = {
         "page_title": "Production vs Demand Dashboard",
         "total_production": ProductionRecord.objects.aggregate(Sum('tonnage'))['tonnage__sum'] or 0,
         "total_demand": PlantDemand.objects.aggregate(Sum('required_tonnage'))['required_tonnage__sum'] or 0,
+        "recent_production": recent_production,
+        "recent_demand": recent_demand,
     }
 
     return render(request, "dashboard/production_vs_demand.html", context)
@@ -232,131 +246,335 @@ def stockpile_forecast_view(request):
 # ==========================================
 # Pit & Phase Visualization Views
 # ==========================================
+def upload_block_model(request):
+    """
+    NEW VIEW: Handles uploading of Surpac Pit Design (.str) and Block Models (.csv).
+    """
+    if request.method == 'POST':
+        form = BlockModelUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            # Directory to save files (inside static so they persist)
+            save_path = os.path.join(settings.BASE_DIR, 'dashboard', 'static', 'data')
+            os.makedirs(save_path, exist_ok=True)
 
-def generate_pit_map_base64(parsed_phases):
-    """Generates an INTERACTIVE 3D Plotly graph."""
-    if not parsed_phases:
+            # 1. Save Pit Design (.str)
+            if 'pit_design_file' in request.FILES:
+                with open(os.path.join(save_path, 'pit_design.str'), 'wb+') as dest:
+                    for chunk in request.FILES['pit_design_file'].chunks():
+                        dest.write(chunk)
+
+            # 2. Save Ore CSV
+            if 'ore_file' in request.FILES:
+                with open(os.path.join(save_path, 'ore_blocks.csv'), 'wb+') as dest:
+                    for chunk in request.FILES['ore_file'].chunks():
+                        dest.write(chunk)
+            
+            # 3. Save Waste CSV
+            if 'waste_file' in request.FILES:
+                with open(os.path.join(save_path, 'waste_blocks.csv'), 'wb+') as dest:
+                    for chunk in request.FILES['waste_file'].chunks():
+                        dest.write(chunk)
+
+            messages.success(request, "Files uploaded successfully! Map updated.")
+            return redirect('pit_phase_dashboard')
+    else:
+        form = BlockModelUploadForm()
+
+    return render(request, 'dashboard/upload_block_model.html', {'form': form})
+
+def generate_pit_map_base64(parsed_phases, ore_data=None, waste_data=None):
+    """
+    Generates 3D Map with Pit Shell (Lines) + Block Model (Points).
+    FIXED: Corrected 'titlefont' error by using title=dict(font=...).
+    """
+    if not parsed_phases and not ore_data and not waste_data:
         return None
 
     fig = go.Figure()
 
-    # 1. Loop through strings and add them as 3D lines
-    for name, coords in parsed_phases.items():
-        xs = [c[0] for c in coords]
-        ys = [c[1] for c in coords]
-        zs = [c[2] for c in coords]
+    # 1. Plot Pit Strings (White Lines)
+    if parsed_phases:
+        for name, coords in parsed_phases.items():
+            if coords:
+                # Unpack coordinates, keeping None values for line breaks
+                xs = [c[0] if c[0] is not None else None for c in coords]
+                ys = [c[1] if c[1] is not None else None for c in coords]
+                zs = [c[2] if c[2] is not None else None for c in coords]
 
+                fig.add_trace(go.Scatter3d(
+                    x=xs, y=ys, z=zs,
+                    mode='lines',
+                    name=f'String {name}',
+                    line=dict(width=2, color='white'), 
+                    connectgaps=False 
+                ))
+
+    # 2. Plot WASTE Blocks (Grey Dots)
+    if waste_data and len(waste_data[0]) > 0:
         fig.add_trace(go.Scatter3d(
-            x=xs, y=ys, z=zs,
-            mode='lines',              # Wireframe mode
-            name=f'String {name}',
-            line=dict(width=3)         # Thickness of the lines
+            x=waste_data[0], y=waste_data[1], z=waste_data[2],
+            mode='markers',
+            name='Waste Rock',
+            marker=dict(size=2, color='grey', opacity=0.3)
         ))
 
-    # 2. Styling to look like the Video (Black Background)
-    fig.update_layout(
-        template='plotly_dark',             # Dark theme like CAD
-        margin=dict(l=0, r=0, b=0, t=0),    # Tight margins
-        scene=dict(
-            xaxis_title='Easting',
-            yaxis_title='Northing',
-            zaxis_title='Elevation',
-            aspectmode='data',              # Crucial: Keeps real-world proportions
+    # 3. Plot ORE Blocks (Gold Diamonds)
+    if ore_data and len(ore_data[0]) > 0:
+        fig.add_trace(go.Scatter3d(
+            x=ore_data[0], y=ore_data[1], z=ore_data[2],
+            mode='markers',
+            name='High Grade Ore',
+            marker=dict(size=3, color='#FFD700', opacity=0.8, symbol='diamond')
+        ))
 
-            # Make the background explicitly black to match your video
-            xaxis=dict(backgroundcolor="black", gridcolor="gray", showbackground=True),
-            yaxis=dict(backgroundcolor="black", gridcolor="gray", showbackground=True),
-            zaxis=dict(backgroundcolor="black", gridcolor="gray", showbackground=True),
+    # 4. Styling (Black Background + Visible White Axes)
+    fig.update_layout(
+        template='plotly_dark',
+        margin=dict(l=0, r=0, b=0, t=0),
+        scene=dict(
+            aspectmode='data', # Keeps real-world proportions
+            
+            # X-AXIS
+            xaxis=dict(
+                title=dict(text='Easting (X)', font=dict(color='white')), # <--- FIXED HERE
+                backgroundcolor="black", 
+                gridcolor="#444", 
+                showbackground=True, 
+                visible=True,
+                tickfont=dict(color='white')
+            ),
+            
+            # Y-AXIS
+            yaxis=dict(
+                title=dict(text='Northing (Y)', font=dict(color='white')), # <--- FIXED HERE
+                backgroundcolor="black", 
+                gridcolor="#444", 
+                showbackground=True, 
+                visible=True,
+                tickfont=dict(color='white')
+            ),
+            
+            # Z-AXIS (Elevation)
+            zaxis=dict(
+                title=dict(text='Elevation (Z)', font=dict(color='white')), # <--- FIXED HERE
+                backgroundcolor="black", 
+                gridcolor="#444", 
+                showbackground=True, 
+                visible=True,
+                tickfont=dict(color='white')
+            ),
         ),
-        paper_bgcolor="black",              # Color outside the graph
+        paper_bgcolor="black",
+        plot_bgcolor="black",
     )
 
-    # 3. Return the HTML string (not an image)
-    # output_type='div' gives us just the graph code to put in our template
     return plot(fig, output_type='div', include_plotlyjs=True)
 
 def phase_progress_view(request):
     """
-    Combines Schedule data, Pit Design map, and Production KPIs.
+    FINAL VERSION: Fixed 'NameError' by restoring total_variance calculation.
     """
-    # 1. Fetch Phases
+    # 1. Standard Production Stats
     phases = PhaseSchedule.objects.select_related('mine_phase').all().order_by('mine_phase__sequence_order')
+    for p in phases: p.update_removed_tonnage()
 
-    # 2. Update Dynamic Fields (Critical for Status: Planned -> Active)
-    for p in phases:
-        p.update_removed_tonnage()
+    total_planned = sum(p.planned_tonnage for p in phases)
+    total_actual = sum(p.removed_tonnage for p in phases)
+    
+    # --- FIX: Restored this line ---
+    total_variance = total_actual - total_planned 
+    
+    # Avoid Division by Zero
+    progress_ratio = 0
+    if total_planned > 0:
+        progress_ratio = total_actual / total_planned
+        progress_ratio = min(progress_ratio, 1.0) # Cap at 100%
 
-    active_phases = phases.filter(status='active')
-    completed_phases = phases.filter(status='completed')
-
-    # 3. Prepare Lists for Charts
-    phase_names = []
-    planned_tonnage = []
-    removed_tonnage = []
-    progress_percentages = []
+    # Chart Data Arrays
+    phase_names = [p.mine_phase.name for p in phases]
+    planned_tonnage = [p.planned_tonnage for p in phases]
+    removed_tonnage = [p.removed_tonnage for p in phases]
+    progress_percentages = [p.current_progress for p in phases]
+    variance_list = [p.removed_tonnage - p.planned_tonnage for p in phases]
     
     ore_movement = []
     waste_movement = []
-    variance_list = [] # Flat list for the Chart Line
-
     for p in phases:
-        phase_names.append(p.mine_phase.name)
-        planned_tonnage.append(p.planned_tonnage)
-        removed_tonnage.append(p.removed_tonnage)
-        progress_percentages.append(p.current_progress)
-
-        # Calculate Ore vs Waste Split
         records = p.mine_phase.production_records.all()
         ore = records.filter(material_type='ore').aggregate(Sum('tonnage'))['tonnage__sum'] or 0
         waste = records.filter(material_type='waste').aggregate(Sum('tonnage'))['tonnage__sum'] or 0
-        
         ore_movement.append(round(ore, 2))
         waste_movement.append(round(waste, 2))
 
-        # Calculate Variance for this phase
-        var = p.removed_tonnage - p.planned_tonnage
-        variance_list.append(var)
+    # =========================================================
+    # LOAD DATA
+    # =========================================================
+    data_path = os.path.join(settings.BASE_DIR, 'dashboard', 'static', 'data')
 
-    # 4. Calculate KPI Totals (For Top Cards)
-    total_planned = sum(planned_tonnage)
-    total_actual = sum(removed_tonnage)
-    total_variance = total_actual - total_planned
+    def load_csv_with_grade(filename, step=50):
+        xs, ys, zs, grades = [], [], [], []
+        fpath = os.path.join(data_path, filename)
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, 'r') as f:
+                    reader = csv.DictReader(f)
+                    count = 0
+                    for row in reader:
+                        if count % step != 0:
+                            count += 1
+                            continue
+                        try:
+                            # Auto-detect column names (case-insensitive)
+                            row_lower = {k.lower().strip(): v for k, v in row.items()}
+                            
+                            x = float(row_lower.get('x', 0))
+                            y = float(row_lower.get('y', 0))
+                            z = float(row_lower.get('z', 0))
+                            
+                            # Try finding grade in various common column names
+                            g_val = row_lower.get('au_ok', row_lower.get('au', row_lower.get('grade', 0)))
+                            g = float(g_val)
 
-    # 5. Pit Map Generation (Your existing logic)
-    str_file = os.path.join(settings.BASE_DIR, 'dashboard', 'static', 'data', 'pit_design.str')
-    if not os.path.exists(str_file):
-        str_file = os.path.join(os.path.dirname(__file__), 'static', 'data', 'pit_design.str')
+                            xs.append(x); ys.append(y); zs.append(z); grades.append(g)
+                        except ValueError:
+                            continue
+                        count += 1
+            except Exception: pass
+        return xs, ys, zs, grades
 
-    pit_map_img = None
-    if os.path.exists(str_file):
-        try:
-            parsed_phases = parse_str_file(str_file)
-            pit_map_img = generate_pit_map_base64(parsed_phases)
-        except Exception as e:
-            print(f"Error generating pit map: {e}")
+    # Load Data
+    ore_x, ore_y, ore_z, ore_grade = load_csv_with_grade('ore_blocks.csv', step=50)
+    waste_x, waste_y, waste_z, _ = load_csv_with_grade('waste_blocks.csv', step=100) 
 
-    # 6. Context
-    context = {
-        # Querysets
-        "phases": phases,
-        "active_phases_count": active_phases.count(),
-        "completed_phases_count": completed_phases.count(),
+    # =========================================================
+    # MINING CUT LOGIC
+    # =========================================================
+    all_z = ore_z + waste_z
+    cut_level = 9999 # Default high
+    
+    final_ore_x, final_ore_y, final_ore_z, final_ore_c = [], [], [], []
+    final_waste_x, final_waste_y, final_waste_z = [], [], []
+
+    if all_z:
+        max_z = max(all_z)
+        min_z = min(all_z)
+        # Calculate level: Mine from Top (Max) down to Bottom (Min)
+        cut_level = max_z - ((max_z - min_z) * progress_ratio)
+
+        # Filter Ore
+        for x, y, z, g in zip(ore_x, ore_y, ore_z, ore_grade):
+            if z < cut_level:
+                final_ore_x.append(x); final_ore_y.append(y); final_ore_z.append(z); final_ore_c.append(g)
+
+        # Filter Waste
+        for x, y, z in zip(waste_x, waste_y, waste_z):
+            if z < cut_level:
+                final_waste_x.append(x); final_waste_y.append(y); final_waste_z.append(z)
+
+    # -------------------------------------------------------
+    # GENERATE MAP
+    # -------------------------------------------------------
+    fig = go.Figure()
+
+    # 1. Pit Shell
+    parsed_phases = parse_str_file(os.path.join(data_path, 'pit_design.str'))
+    
+    # Calculate Pit Bounds for the Mining Plane
+    pit_xs, pit_ys = [], []
+    
+    if parsed_phases:
+        for name, coords in parsed_phases.items():
+            if coords:
+                px = [c[0] if c[0] is not None else None for c in coords]
+                py = [c[1] if c[1] is not None else None for c in coords]
+                pz = [c[2] if c[2] is not None else None for c in coords]
+                
+                # Collect coords for bounds calculation
+                for p in coords:
+                    if p[0] is not None: 
+                        pit_xs.append(p[0])
+                        pit_ys.append(p[1])
+
+                fig.add_trace(go.Scatter3d(
+                    x=px, y=py, z=pz, mode='lines', 
+                    line=dict(color='white', width=2), connectgaps=False, showlegend=False
+                ))
+
+    # 2. Add "Mining Plane" (The Visual Update Indicator)
+    if pit_xs and pit_ys:
+        min_x, max_x = min(pit_xs), max(pit_xs)
+        min_y, max_y = min(pit_ys), max(pit_ys)
         
-        # KPI Totals
+        fig.add_trace(go.Mesh3d(
+            x=[min_x, max_x, max_x, min_x],
+            y=[min_y, min_y, max_y, max_y],
+            z=[cut_level, cut_level, cut_level, cut_level],
+            color='cyan', opacity=0.3, 
+            name=f'Current Level: {cut_level:.1f}m',
+            hoverinfo='name'
+        ))
+
+    # 3. Waste Blocks
+    if final_waste_x:
+        fig.add_trace(go.Scatter3d(
+            x=final_waste_x, y=final_waste_y, z=final_waste_z,
+            mode='markers', name='Waste',
+            marker=dict(size=2, color='grey', opacity=0.3)
+        ))
+
+    # 4. Ore Blocks (Heatmap)
+    if final_ore_x:
+        fig.add_trace(go.Scatter3d(
+            x=final_ore_x, y=final_ore_y, z=final_ore_z,
+            mode='markers', name='Ore Block',
+            marker=dict(
+                size=4,
+                color=final_ore_c,
+                colorscale='Jet',
+                cmin=0.0, cmax=3.0,
+                showscale=True,
+                colorbar=dict(
+                    title=dict(text="Au (g/t)", font=dict(color='white')), 
+                    tickfont=dict(color='white')
+                )
+            ),
+            text=[f"Grade: {g:.2f} g/t" for g in final_ore_c],
+            hoverinfo='text'
+        ))
+
+    # Styling
+    fig.update_layout(
+        title=dict(
+            text=f"Mining Progress: {progress_ratio*100:.1f}% (Level {cut_level:.0f}m)",
+            font=dict(color='white', size=14),
+            x=0.05, y=0.95
+        ),
+        template='plotly_dark', margin=dict(l=0, r=0, b=0, t=0),
+        scene=dict(
+            aspectmode='data',
+            xaxis=dict(title=dict(text='Easting', font=dict(color='white')), backgroundcolor="black", gridcolor="#444", showbackground=True, visible=True, tickfont=dict(color='white')),
+            yaxis=dict(title=dict(text='Northing', font=dict(color='white')), backgroundcolor="black", gridcolor="#444", showbackground=True, visible=True, tickfont=dict(color='white')),
+            zaxis=dict(title=dict(text='Elevation', font=dict(color='white')), backgroundcolor="black", gridcolor="#444", showbackground=True, visible=True, tickfont=dict(color='white'))
+        ),
+        paper_bgcolor="black", plot_bgcolor="black"
+    )
+    
+    pit_map_img = plot(fig, output_type='div', include_plotlyjs=True)
+
+    context = {
+        "phases": phases,
+        "active_phases_count": phases.filter(status='active').count(),
+        "completed_phases_count": phases.filter(status='completed').count(),
         "total_planned": total_planned,
         "total_actual": total_actual,
         "total_variance": total_variance,
-
-        # Chart Data Lists
         "phase_names": phase_names,
         "planned_tonnage": planned_tonnage,
         "removed_tonnage": removed_tonnage,
         "progress_percentages": progress_percentages,
         "ore_movement": ore_movement,
         "waste_movement": waste_movement,
-        "variance": variance_list, # The chart needs this specific flat list
-        
-        # Visuals
+        "variance": variance_list,
         "pit_map_img": pit_map_img,
     }
 
@@ -508,20 +726,27 @@ def add_stockpile(request):
         form = StockpileForm()
     return render(request, 'dashboard/add_stockpile.html', {'form': form})
 
+def add_plantdemand(request):
+    if request.method == 'POST':
+        form = PlantDemandForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('production-vs-demand')
+    else:
+        form = PlantDemandForm()
+    return render(request, 'dashboard/add_plantdemand.html', {'form': form})
 
 def add_production(request):
     if request.method == 'POST':
         form = ProductionRecordForm(request.POST)
         if form.is_valid():
-            form.save()
+            record = form.save(commit=False)
+            # Link is handled in form.clean() or form.save() logic
+            record.save()
             return redirect('production-vs-demand')
     else:
         form = ProductionRecordForm()
-    return render(request, 'dashboard/add_production.html', {
-        'form': form,
-        'plants': Plant.objects.all()
-    })
-
+    return render(request, 'dashboard/add_production.html', {'form': form})
 
 def add_oresample(request):
     if request.method == 'POST':
@@ -537,20 +762,6 @@ def add_oresample(request):
         'form': form,
         'samples': samples
     })
-
-
-def add_plantdemand(request):
-    if request.method == 'POST':
-        form = PlantDemandForm(request.POST)
-        if form.is_valid():
-            form.save()
-            return redirect('production-vs-demand')
-    else:
-        form = PlantDemandForm()
-    return render(request, 'dashboard/add_plantdemand.html', {'form': form})
-
-
-# dashboard/views.py
 
 def add_phaseschedule(request):
     # Smart Scenario Look-up for autocomplete
@@ -1068,3 +1279,18 @@ def auto_generate_phases(request):
 
     messages.success(request, f"Success! Connected to '{scenario.name}' and synced {created_count} phases.")
     return redirect('pit_phase_dashboard')
+
+def manage_plants(request):
+    """
+    Page to View and Add Plants (Master Data).
+    """
+    if request.method == 'POST':
+        form = PlantForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('manage_plants') # Reload page to show new plant
+    else:
+        form = PlantForm()
+
+    plants = Plant.objects.all().order_by('name')
+    return render(request, 'dashboard/manage_plants.html', {'form': form, 'plants': plants})

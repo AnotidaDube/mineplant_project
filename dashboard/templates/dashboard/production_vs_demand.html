@@ -1,56 +1,48 @@
 {% extends "dashboard/base.html" %}
+{% load humanize %}
 
 {% block title %}Production vs Plant Demand{% endblock %}
 
 {% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1>Production vs Plant Demand</h1>
     <div>
-        <a href="{% url 'add-production' %}" class="btn btn-primary btn-sm me-2">Add Production</a>
-        <a href="{% url 'add-plantdemand' %}" class="btn btn-danger btn-sm">Add Plant Demand</a>
+        <a href="{% url 'add-production' %}" class="btn btn-primary btn-sm me-2">+ Add Production</a>
+        <a href="{% url 'add-plantdemand' %}" class="btn btn-danger btn-sm">+ Add Plant Demand</a>
     </div>
 </div>
 
 <div class="row text-center mb-3">
-    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Ore (t)</small><h4 id="totalOre">0</h4></div></div>
-    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Waste (t)</small><h4 id="totalWaste">0</h4></div></div>
-    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Demand (t)</small><h4 id="totalDemand">0</h4></div></div>
-    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Variance (t)</small><h4 id="totalVariance">0</h4></div></div>
+    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Ore (t)</small><h4 id="totalOre">{{ total_production|intcomma }}</h4></div></div>
+    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Demand (t)</small><h4 id="totalDemand">{{ total_demand|intcomma }}</h4></div></div>
 </div>
 
 <div class="mb-2 d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div class="d-flex align-items-center gap-2">
-        <div>
-            <button class="btn btn-sm btn-outline-secondary" onclick="setMode('daily')">Daily</button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="setMode('weekly')">Weekly</button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="setMode('monthly')">Monthly</button>
-        </div>
-        <div class="ms-3 d-flex align-items-center gap-1">
-            <label class="small text-muted">Start:</label>
-            <input type="date" class="form-control form-control-sm" id="startDate" style="width: auto;">
-            <label class="small text-muted">End:</label>
-            <input type="date" class="form-control form-control-sm" id="endDate" style="width: auto;">
-            <button class="btn btn-secondary btn-sm" onclick="applyDateFilter()">Apply</button>
-        </div>
+        <label class="small text-muted">Filter Date:</label>
+        <input type="date" class="form-control form-control-sm" id="startDate" style="width: auto;">
+        <input type="date" class="form-control form-control-sm" id="endDate" style="width: auto;">
+        <button class="btn btn-secondary btn-sm" onclick="applyDateFilter()">Apply</button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="resetFilter()">Reset</button>
     </div>
-    
     <div>
-        <button class="btn btn-sm btn-outline-success" onclick="exportCSV()">
-            <i class="fas fa-file-csv"></i> Export CSV
-        </button>
-        <button class="btn btn-sm btn-outline-danger" onclick="exportPDF()">
-            <i class="fas fa-file-pdf"></i> Export PDF
-        </button>
+        <button class="btn btn-sm btn-outline-success" onclick="exportCSV()"><i class="fas fa-file-csv"></i> CSV</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="exportPDF()"><i class="fas fa-file-pdf"></i> PDF</button>
     </div>
 </div>
 
-<canvas id="prodDemandChart" height="100"></canvas>
+<div class="card shadow mb-4">
+    <div class="card-body">
+        <canvas id="prodDemandChart" height="80"></canvas>
+    </div>
+</div>
 
 <div class="mt-4">
-    <h5>Data Log</h5>
+    <h5>Data Log (Chart Data)</h5>
     <div class="table-responsive">
         <table class="table table-sm table-hover table-bordered" id="varianceTable">
             <thead class="table-dark">
@@ -67,240 +59,175 @@
         </table>
     </div>
 </div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card shadow mb-4">
+            <div class="card-header py-2 bg-danger text-white"><h6 class="m-0 fw-bold">Recent Plant Demand</h6></div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    {% for item in recent_demand %}
+                    <tr>
+                        <td>{{ item.timestamp|date:"d M Y" }}</td>
+                        <td class="text-end fw-bold">{{ item.required_tonnage|intcomma }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td class="text-muted text-center">No Data</td></tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card shadow mb-4">
+            <div class="card-header py-2 bg-primary text-white"><h6 class="m-0 fw-bold">Recent Production</h6></div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    {% for item in recent_production %}
+                    <tr>
+                        <td>{{ item.timestamp|date:"d M Y" }}</td>
+                        <td>{{ item.material_type|title }}</td>
+                        <td class="text-end fw-bold">{{ item.tonnage|intcomma }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td class="text-muted text-center">No Data</td></tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script>
 let originalData = [];
-let filteredData = []; // Keeps track of currently visible data for export
-let currentMode = 'daily';
-const NEGATIVE_ALERT_THRESHOLD = 3;
+let filteredData = [];
 
+// 1. Fetch Data
 async function initialLoad() {
     try {
-        const prodRes = await fetch('/api/production/');
-        const prodData = await prodRes.json();
-        const demRes = await fetch('/api/plantdemand/');
-        const demandData = await demRes.json();
-
-        const demandMap = {};
-        demandData.forEach(d => {
-            const dateStr = new Date(d.timestamp).toISOString().slice(0,10);
-            demandMap[dateStr] = Number(d.required_tonnage);
-        });
-
-        const dataByDate = {};
-
-        prodData.forEach(p => {
-            const dateStr = new Date(p.timestamp).toISOString().slice(0,10);
-            if(!dataByDate[dateStr]) dataByDate[dateStr] = { ore:0, waste:0 };
-            if(p.material_type==='ore') dataByDate[dateStr].ore += Number(p.tonnage);
-            else if(p.material_type==='waste') dataByDate[dateStr].waste += Number(p.tonnage);
-        });
-
-        originalData = Object.keys(dataByDate).map(dateStr => {
-            const dateObj = new Date(dateStr);
-            const ore = dataByDate[dateStr].ore;
-            const waste = dataByDate[dateStr].waste;
-            const production = ore + waste;
-            const demand = demandMap[dateStr] || 0;
-            return {
-                date: dateObj,
-                label: dateObj.toLocaleDateString(),
-                ore, waste, production, demand,
-                variance: production - demand
-            };
-        }).sort((a,b)=>a.date-b.date);
-
-        applyCurrentView();
-        startWebSocket();
-
+        const response = await fetch('', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if (!response.ok) throw new Error('Network response was not ok');
+        
+        const data = await response.json();
+        processData(data);
     } catch(err) {
-        console.error("Error fetching data:", err);
+        console.error("Error fetching chart data:", err);
     }
 }
 
-function renderChart(data) {
+// 2. Process Data for Chart
+function processData(data) {
+    const prodData = data.production;
+    const demandData = data.demand;
+    const combined = {};
+
+    // Helper to init date obj
+    const getObj = (d) => {
+        const dateStr = d.slice(0,10);
+        if(!combined[dateStr]) combined[dateStr] = { date: new Date(dateStr), label: dateStr, ore:0, waste:0, demand:0 };
+        return combined[dateStr];
+    }
+
+    // Process Production
+    prodData.forEach(p => {
+        const obj = getObj(p.timestamp);
+        if(p.material_type === 'ore') obj.ore += Number(p.tonnage);
+        else obj.waste += Number(p.tonnage);
+    });
+
+    // Process Demand
+    demandData.forEach(d => {
+        const obj = getObj(d.timestamp);
+        obj.demand += Number(d.required_tonnage);
+    });
+
+    // Flatten to Array
+    originalData = Object.values(combined).map(d => {
+        d.production = d.ore + d.waste;
+        d.variance = d.production - d.demand;
+        return d;
+    }).sort((a,b) => a.date - b.date);
+
+    applyDateFilter(); // Render
+}
+
+// 3. Render
+function renderDashboard(data) {
+    // Chart
     const ctx = document.getElementById('prodDemandChart').getContext('2d');
     if(window.prodChart) window.prodChart.destroy();
 
     window.prodChart = new Chart(ctx, {
-        type:'line',
-        data:{
-            labels:data.map(d=>d.label),
-            datasets:[
-                { label:'Production', data:data.map(d=>d.production), borderColor:'#006AFF', backgroundColor:'rgba(0,106,255,0.2)', tension:0.2 },
-                { label:'Demand', data:data.map(d=>d.demand), borderColor:'#FF3C3C', backgroundColor:'rgba(255,60,60,0.2)', tension:0.2 },
-                { label:'Variance', data:data.map(d=>d.variance), borderColor:'#28C76F', backgroundColor:'rgba(40,199,111,0.2)', tension:0.2 }
+        type: 'line',
+        data: {
+            labels: data.map(d => d.label),
+            datasets: [
+                { label: 'Production', data: data.map(d=>d.production), borderColor: '#0d6efd', backgroundColor: 'rgba(13,110,253,0.1)', fill: true },
+                { label: 'Demand', data: data.map(d=>d.demand), borderColor: '#dc3545', borderDash: [5,5] }
             ]
         },
-        options:{
-            responsive:true,
-            plugins:{ tooltip:{
-                callbacks:{ label:ctx=>{
-                    const v = ctx.raw;
-                    if(ctx.dataset.label==='Variance') return `Variance: ${v} t (${v>=0?"Above Demand":"Below Demand"})`;
-                    return `${ctx.dataset.label}: ${v} t`;
-                }}
-            }},
-            scales:{
-                x:{ title:{ display:true, text:'Date' } },
-                y:{ title:{ display:true, text:'Tonnage (t)' }, beginAtZero:true }
-            }
-        }
+        options: { responsive: true, maintainAspectRatio: false }
     });
-}
 
-function renderTableAndKPI(data){
+    // Log Table
     const tbody = document.getElementById('varianceTableBody');
-    tbody.innerHTML='';
-    let totalOre=0,totalWaste=0,totalDemand=0,totalVariance=0;
-
-    data.forEach(d=>{
-        totalOre+=d.ore;
-        totalWaste+=d.waste;
-        totalDemand+=d.demand;
-        totalVariance+=d.variance;
-
-        const tr = document.createElement('tr');
-        tr.innerHTML=`
+    tbody.innerHTML = '';
+    data.forEach(d => {
+        const row = `<tr>
             <td>${d.label}</td>
             <td class="text-end">${d.ore.toLocaleString()}</td>
             <td class="text-end">${d.waste.toLocaleString()}</td>
             <td class="text-end fw-bold">${d.production.toLocaleString()}</td>
             <td class="text-end">${d.demand.toLocaleString()}</td>
-            <td class="text-end fw-bold ${d.variance>=0?'text-success':'text-danger'}">${d.variance.toLocaleString()}</td>
-        `;
-        tbody.appendChild(tr);
+            <td class="text-end fw-bold ${d.variance >= 0 ? 'text-success' : 'text-danger'}">${d.variance.toLocaleString()}</td>
+        </tr>`;
+        tbody.innerHTML += row;
     });
-
-    document.getElementById('totalOre').innerText = totalOre.toLocaleString();
-    document.getElementById('totalWaste').innerText = totalWaste.toLocaleString();
-    document.getElementById('totalDemand').innerText = totalDemand.toLocaleString();
-    document.getElementById('totalVariance').innerText = totalVariance.toLocaleString();
 }
 
-function applyCurrentView(){
+function applyDateFilter() {
     let result = [...originalData];
     const startVal = document.getElementById('startDate').value;
     const endVal = document.getElementById('endDate').value;
-    if(startVal) result = result.filter(d=>d.date >= new Date(startVal));
-    if(endVal) result = result.filter(d=>d.date <= new Date(endVal));
+    if(startVal) result = result.filter(d => d.date >= new Date(startVal));
+    if(endVal) result = result.filter(d => d.date <= new Date(endVal));
     
-    // Update Global State for Exports
     filteredData = result;
-    
-    renderChart(filteredData);
-    renderTableAndKPI(filteredData);
+    renderDashboard(filteredData);
 }
 
-function setMode(m){ currentMode=m; applyCurrentView(); }
-function applyDateFilter(){ applyCurrentView(); }
-
-function startWebSocket(){
-    const wsProtocol = location.protocol==='https:'?'wss':'ws';
-    const socket = new WebSocket(`${wsProtocol}://${location.host}/ws/prod-demand/`);
-    socket.onmessage = e=>{
-        const msg=JSON.parse(e.data);
-        if(msg.type==='update'){
-            const p=msg.payload;
-            const dateStr=new Date(p.timestamp).toISOString().slice(0,10);
-            let idx = originalData.findIndex(d=>d.date.toISOString().slice(0,10)===dateStr);
-            if(idx>=0){
-                if(p.model==='production'){
-                    if(p.material_type==='ore') originalData[idx].ore = Number(p.tonnage);
-                    else originalData[idx].waste = Number(p.tonnage);
-                    originalData[idx].production = originalData[idx].ore + originalData[idx].waste;
-                } else if(p.model==='plantdemand'){
-                    originalData[idx].demand = Number(p.required_tonnage);
-                }
-                originalData[idx].variance = originalData[idx].production - originalData[idx].demand;
-            } else {
-                let ore=0,waste=0,production=0,demand=0;
-                if(p.model==='production'){ if(p.material_type==='ore') ore=p.tonnage; else waste=p.tonnage; production=ore+waste;}
-                else if(p.model==='plantdemand'){ demand=p.required_tonnage; }
-                originalData.push({
-                    date:new Date(p.timestamp),
-                    label:new Date(p.timestamp).toLocaleDateString(),
-                    ore,waste,production,demand,
-                    variance:production-demand
-                });
-                originalData.sort((a,b)=>a.date-b.date);
-            }
-            applyCurrentView();
-        }
-    };
+function resetFilter() {
+    document.getElementById('startDate').value = '';
+    document.getElementById('endDate').value = '';
+    applyDateFilter();
 }
 
-// --- CSV Export Logic ---
-function exportCSV(){
-    if(!filteredData.length) { alert("No data to export"); return; }
-    
-    const rows=[['Date','Ore (t)','Waste (t)','Total Production (t)','Demand (t)','Variance (t)']];
-    filteredData.forEach(d=>rows.push([d.label, d.ore, d.waste, d.production, d.demand, d.variance]));
-    
-    const blob=new Blob([rows.map(r=>r.join(',')).join('\n')],{type:'text/csv'});
-    const a=document.createElement('a'); 
-    a.href=URL.createObjectURL(blob); 
-    a.download=`production_report_${new Date().toISOString().slice(0,10)}.csv`; 
-    a.click();
-}
-
-// --- PDF Export Logic ---
-function exportPDF(){
-    if(!filteredData.length) { alert("No data to export"); return; }
-    
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF('p', 'mm', 'a4'); // Portrait, mm, A4 size
-    
-    // 1. Add Title and Header info
-    doc.setFontSize(18);
-    doc.text("Production vs Plant Demand Report", 14, 15);
-    
-    doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
-    
-    // 2. Add Chart Snapshot
-    // We grab the Canvas as a base64 image
-    const canvas = document.getElementById('prodDemandChart');
-    const chartImg = canvas.toDataURL('image/png', 1.0);
-    
-    // Add image (x, y, width, height) - Adjust height specifically to preserve aspect ratio if needed
-    doc.addImage(chartImg, 'PNG', 10, 25, 190, 80);
-    
-    // 3. Add Data Table
-    const headers = [['Date', 'Ore (t)', 'Waste (t)', 'Production (t)', 'Demand (t)', 'Variance (t)']];
-    const data = filteredData.map(d => [
-        d.label, 
-        d.ore, 
-        d.waste, 
-        d.production, 
-        d.demand, 
-        d.variance
-    ]);
-
-    doc.autoTable({
-        head: headers,
-        body: data,
-        startY: 110, // Start table below the chart
-        theme: 'grid',
-        headStyles: { fillColor: [50, 50, 50] }, // Dark header to match HTML
-        styles: { fontSize: 8, halign: 'right' }, // Align numbers to right
-        columnStyles: { 0: { halign: 'left' } }, // Align date to left
-        didParseCell: function(data) {
-            // Highlight negative variance in red inside PDF
-            if (data.section === 'body' && data.column.index === 5) {
-                const val = parseFloat(data.cell.raw);
-                if (val < 0) {
-                    data.cell.styles.textColor = [220, 53, 69]; // Red
-                } else {
-                    data.cell.styles.textColor = [25, 135, 84]; // Green
-                }
-            }
-        }
+function exportCSV() {
+    if(!filteredData.length) return alert("No data");
+    let csv = "Date,Ore,Waste,Production,Demand,Variance\n";
+    filteredData.forEach(d => {
+        csv += `${d.label},${d.ore},${d.waste},${d.production},${d.demand},${d.variance}\n`;
     });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'report.csv'; a.click();
+}
 
-    doc.save(`production_report_${new Date().toISOString().slice(0,10)}.pdf`);
+function exportPDF() {
+    if(!filteredData.length) return alert("No data");
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.text("Production Report", 14, 15);
+    doc.autoTable({
+        head: [['Date', 'Ore', 'Waste', 'Prod', 'Demand', 'Var']],
+        body: filteredData.map(d => [d.label, d.ore, d.waste, d.production, d.demand, d.variance]),
+        startY: 20
+    });
+    doc.save('report.pdf');
 }
 
 initialLoad();

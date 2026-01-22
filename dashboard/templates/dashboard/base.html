@@ -6,9 +6,7 @@
     <title>{% block title %}Mine-Plant Dashboard{% endblock %}</title>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-    
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -191,6 +189,12 @@
 
             <a class="nav-link {% if request.resolver_match.url_name == 'pit_phase_dashboard' %}active{% endif %}" href="{% url 'pit_phase_dashboard' %}">
                 <i class="fas fa-map"></i> Pit Progress
+            </a>
+
+            <div class="sidebar-heading">Configuration</div>
+
+            <a class="nav-link {% if request.resolver_match.url_name == 'manage-plants' %}active{% endif %}" href="{% url 'manage-plants' %}">
+                <i class="fas fa-industry"></i> Manage Plants
             </a>
 
         </nav>
