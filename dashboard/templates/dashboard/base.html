@@ -178,6 +178,10 @@
             <a class="nav-link {% if request.resolver_match.url_name == 'upload_schedule' %}active{% endif %}" href="{% url 'upload_schedule' %}">
                 <i class="fas fa-file-upload"></i> Upload Plan
             </a>
+
+            <a class="nav-link {% if request.resolver_match.url_name == 'planning_dashboard' %}active{% endif %}" href="{% url 'planning_dashboard' %}">
+                <i class="fas fa-drafting-compass"></i> Strategic Balance
+            </a>
             <a class="nav-link {% if request.resolver_match.url_name == 'schedule_dashboard' %}active{% endif %}" href="{% url 'schedule_dashboard' %}">
                 <i class="fas fa-calendar-alt"></i> Production Schedule
             </a>

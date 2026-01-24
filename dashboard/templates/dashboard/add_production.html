@@ -27,11 +27,13 @@
         backdrop-filter: blur(4px);
         border-radius: 12px;
         color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.1);
     }
 
     label {
         color: #ffffff !important;
         font-weight: 600;
+        margin-bottom: 5px;
     }
 
     .card-header {
@@ -39,11 +41,20 @@
         border-bottom: 1px solid rgba(255, 255, 255, 0.15);
     }
 
-    a, h2, h4, p {
+    h2, h4, p, small {
         color: #ffffff !important;
     }
 
-    /* Add result styling */
+    /* Form controls need to be visible against dark background */
+    .form-control, .form-select {
+        background-color: rgba(255, 255, 255, 0.9);
+        border: none;
+    }
+    
+    .form-text {
+        color: #cccccc !important;
+    }
+
     #break-result {
         margin-top: 10px;
         font-weight: bold;
@@ -51,23 +62,93 @@
     }
 </style>
 
-<div class="container mt-4">
+<div class="container mt-5" style="max-width: 800px;">
     <div class="card shadow p-4">
-        <div class="card-header text-center mb-3">
-            <h2>Add Production Record</h2>
+        <div class="card-header text-center mb-4 rounded-top">
+            <h2><i class="fas fa-truck-loading me-2"></i>Add Production Record</h2>
         </div>
+        
         <form method="POST" id="productionForm">
             {% csrf_token %}
-            {{ form.as_p }}
+            
+            {% if form.non_field_errors %}
+                <div class="alert alert-danger">
+                    {% for error in form.non_field_errors %}
+                        {{ error }}
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">{{ form.mine_phase_name.label }}</label>
+                    {{ form.mine_phase_name }} <div class="form-text">Start typing to see active pits.</div>
+                    {% if form.mine_phase_name.errors %}
+                        <div class="text-danger small bg-white rounded px-2">{{ form.mine_phase_name.errors.0 }}</div>
+                    {% endif %}
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label">{{ form.plant_name.label }}</label>
+                    {{ form.plant_name }} <div class="form-text">Where is this load going?</div>
+                    {% if form.plant_name.errors %}
+                        <div class="text-danger small bg-white rounded px-2">{{ form.plant_name.errors.0 }}</div>
+                    {% endif %}
+                </div>
+
+                <div class="col-12">
+                    <label class="form-label">Date & Time</label>
+                    {{ form.timestamp }}
+                </div>
+
+                <div class="col-12"><hr class="bg-light"></div>
+
+                <div class="col-md-6">
+                    <label class="form-label">Material Type</label>
+                    {{ form.material_type }}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-warning">Tonnage (t)</label>
+                    {{ form.tonnage }}
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label text-info">Actual Grade (g/t)</label>
+                    {{ form.grade }}
+                    <div class="form-text">Leave blank to use Plan Grade.</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Recovery (%)</label>
+                    {{ form.recovery }}
+                </div>
+            </div>
+
             <div id="break-result"></div>
-            <button type="submit" class="btn btn-primary mt-3">Save</button>
-            <a href="{% url 'production-vs-demand' %}" class="btn btn-secondary mt-3">Cancel</a>
+
+            <div class="d-grid gap-2 mt-4">
+                <button type="submit" class="btn btn-primary btn-lg">Save Record</button>
+                <a href="{% url 'production-vs-demand' %}" class="btn btn-secondary">Cancel</a>
+            </div>
         </form>
-<a href="{% url 'production_summary' %}" class="btn btn-info">See Summary of Previous Records</a>
+        
+        <div class="text-center mt-3">
+            <a href="{% url 'production_summary' %}" class="btn btn-info btn-sm">See Summary of Previous Records</a>
+        </div>
     </div>
 </div>
 
-<!-- Link to external JS file -->
+<datalist id="phase_list">
+    {% for phase in phases %}
+        <option value="{{ phase.name }}">
+    {% endfor %}
+</datalist>
+
+<datalist id="plant_list">
+    {% for plant in plants %}
+        <option value="{{ plant.name }}">
+    {% endfor %}
+</datalist>
+
 <script src="{% static 'dashboard/js/production_variance.js' %}"></script>
 
 {% endblock %}

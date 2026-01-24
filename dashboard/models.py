@@ -298,3 +298,26 @@ class MaterialSchedule(models.Model):
 
     def __str__(self):
         return f"Pd {self.period} - {self.material_type} ({self.mass}t)"
+
+class MonthlyProductionPlan(models.Model):
+    """
+    Stores your specific instruction for the month.
+    Links the 'MaterialSchedule' (Source) to 'PlantDemand' (Target) & 'Stockpile' (Overflow).
+    """
+    month_period = models.CharField(max_length=7, help_text="Format YYYY-MM")
+    material_type = models.CharField(max_length=50) # matches MaterialSchedule choices
+    
+    # 1. Detected from your MaterialSchedule
+    available_tonnage = models.FloatField(help_text="Total mass from CSV for this month")
+    avg_grade = models.FloatField(help_text="Weighted average grade from CSV")
+
+    # 2. Your Manual Decision
+    plant_target = models.FloatField(help_text="How much you WANT to process (e.g. 780t)")
+    
+    # 3. Calculated Results
+    sent_to_stockpile = models.FloatField(help_text="The remaining ore sent to stockpile")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.month_period} Plan ({self.material_type})"

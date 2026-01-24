@@ -9,89 +9,137 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h1>Production vs Plant Demand</h1>
+    <h1 class="h3 text-dark fw-bold"><i class="fas fa-chart-line me-2"></i>Production vs Plant Demand</h1>
     <div>
-        <a href="{% url 'add-production' %}" class="btn btn-primary btn-sm me-2">+ Add Production</a>
-        <a href="{% url 'add-plantdemand' %}" class="btn btn-danger btn-sm">+ Add Plant Demand</a>
+        <a href="{% url 'add-production' %}" class="btn btn-primary btn-sm me-2 shadow-sm">
+            <i class="fas fa-plus me-1"></i> Add Production
+        </a>
+        <a href="{% url 'add-plantdemand' %}" class="btn btn-danger btn-sm shadow-sm">
+            <i class="fas fa-plus me-1"></i> Add Plant Demand
+        </a>
     </div>
 </div>
 
-<div class="row text-center mb-3">
-    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Ore (t)</small><h4 id="totalOre">{{ total_production|intcomma }}</h4></div></div>
-    <div class="col-md-3"><div class="card shadow-sm p-2"><small>Total Demand (t)</small><h4 id="totalDemand">{{ total_demand|intcomma }}</h4></div></div>
-</div>
-
-<div class="mb-2 d-flex align-items-center justify-content-between flex-wrap gap-2">
-    <div class="d-flex align-items-center gap-2">
-        <label class="small text-muted">Filter Date:</label>
-        <input type="date" class="form-control form-control-sm" id="startDate" style="width: auto;">
-        <input type="date" class="form-control form-control-sm" id="endDate" style="width: auto;">
-        <button class="btn btn-secondary btn-sm" onclick="applyDateFilter()">Apply</button>
-        <button class="btn btn-outline-secondary btn-sm" onclick="resetFilter()">Reset</button>
+<div class="row text-center mb-4">
+    <div class="col-md-3">
+        <div class="card shadow-sm border-start border-primary border-4 p-2">
+            <small class="text-muted text-uppercase fw-bold">Total Ore Mined</small>
+            <h4 id="totalOre" class="text-primary fw-bold my-1">{{ total_production|floatformat:0|intcomma }} t</h4>
+        </div>
     </div>
-    <div>
-        <button class="btn btn-sm btn-outline-success" onclick="exportCSV()"><i class="fas fa-file-csv"></i> CSV</button>
-        <button class="btn btn-sm btn-outline-danger" onclick="exportPDF()"><i class="fas fa-file-pdf"></i> PDF</button>
+    <div class="col-md-3">
+        <div class="card shadow-sm border-start border-danger border-4 p-2">
+            <small class="text-muted text-uppercase fw-bold">Total Plant Demand</small>
+            <h4 id="totalDemand" class="text-danger fw-bold my-1">{{ total_demand|floatformat:0|intcomma }} t</h4>
+        </div>
     </div>
 </div>
 
-<div class="card shadow mb-4">
+<div class="card shadow-sm mb-4 border-0">
+    <div class="card-body py-2 d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div class="d-flex align-items-center gap-2">
+            <label class="small text-muted fw-bold">Filter Range:</label>
+            <input type="date" class="form-control form-control-sm" id="startDate" style="width: auto;">
+            <span class="text-muted">-</span>
+            <input type="date" class="form-control form-control-sm" id="endDate" style="width: auto;">
+            <button class="btn btn-dark btn-sm" onclick="applyDateFilter()">
+                <i class="fas fa-filter"></i> Apply
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="resetFilter()">Reset</button>
+        </div>
+        <div>
+            <button class="btn btn-sm btn-outline-success fw-bold" onclick="exportCSV()">
+                <i class="fas fa-file-csv me-1"></i> CSV
+            </button>
+            <button class="btn btn-sm btn-outline-danger fw-bold" onclick="exportPDF()">
+                <i class="fas fa-file-pdf me-1"></i> PDF
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow mb-4 border-0">
+    <div class="card-header bg-white">
+        <h6 class="m-0 fw-bold text-dark">Production vs Demand Trend</h6>
+    </div>
     <div class="card-body">
-        <canvas id="prodDemandChart" height="80"></canvas>
+        <div style="height: 300px;">
+            <canvas id="prodDemandChart"></canvas>
+        </div>
     </div>
 </div>
 
-<div class="mt-4">
-    <h5>Data Log (Chart Data)</h5>
-    <div class="table-responsive">
-        <table class="table table-sm table-hover table-bordered" id="varianceTable">
-            <thead class="table-dark">
-                <tr>
-                    <th>Date</th>
-                    <th class="text-end">Ore (t)</th>
-                    <th class="text-end">Waste (t)</th>
-                    <th class="text-end">Total Production (t)</th>
-                    <th class="text-end">Demand (t)</th>
-                    <th class="text-end">Variance (t)</th>
-                </tr>
-            </thead>
-            <tbody id="varianceTableBody"></tbody>
-        </table>
+<div class="card shadow mb-4 border-0">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <h6 class="m-0 fw-bold"><i class="fas fa-table me-2"></i>Daily Data Log</h6>
     </div>
-</div>
-
-<div class="row mt-4">
-    <div class="col-md-6">
-        <div class="card shadow mb-4">
-            <div class="card-header py-2 bg-danger text-white"><h6 class="m-0 fw-bold">Recent Plant Demand</h6></div>
-            <div class="card-body p-0">
-                <table class="table table-sm mb-0">
-                    {% for item in recent_demand %}
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover table-striped mb-0" id="varianceTable">
+                <thead class="bg-secondary text-white">
                     <tr>
-                        <td>{{ item.timestamp|date:"d M Y" }}</td>
-                        <td class="text-end fw-bold">{{ item.required_tonnage|intcomma }}</td>
+                        <th rowspan="2" class="align-middle ps-3">Date</th>
+                        <th colspan="4" class="text-center border-bottom border-light">Tonnage (t)</th>
+                        <th colspan="3" class="text-center border-bottom border-light">Ore Grade (g/t)</th>
                     </tr>
-                    {% empty %}
-                    <tr><td class="text-muted text-center">No Data</td></tr>
-                    {% endfor %}
+                    <tr>
+                        <th class="text-end text-light small">Ore</th>
+                        <th class="text-end text-light small">Waste</th>
+                        <th class="text-end text-light small">Demand</th>
+                        <th class="text-end text-white small fw-bold">Var (t)</th>
+                        
+                        <th class="text-end text-light small">Expected</th>
+                        <th class="text-end text-light small">Actual</th>
+                        <th class="text-end text-white small fw-bold">Var (g/t)</th>
+                    </tr>
+                </thead>
+                <tbody id="varianceTableBody">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card shadow mb-4 border-0">
+            <div class="card-header py-2 bg-danger text-white">
+                <h6 class="m-0 fw-bold"><i class="fas fa-industry me-2"></i>Recent Plant Demand</h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0 table-hover">
+                    <tbody>
+                        {% for item in recent_demand %}
+                        <tr>
+                            <td class="ps-3">{{ item.timestamp|date:"d M Y" }}</td>
+                            <td class="text-end pe-3 fw-bold">{{ item.required_tonnage|intcomma }} t</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td class="text-muted text-center py-3">No Data</td></tr>
+                        {% endfor %}
+                    </tbody>
                 </table>
             </div>
         </div>
     </div>
     <div class="col-md-6">
-        <div class="card shadow mb-4">
-            <div class="card-header py-2 bg-primary text-white"><h6 class="m-0 fw-bold">Recent Production</h6></div>
+        <div class="card shadow mb-4 border-0">
+            <div class="card-header py-2 bg-primary text-white">
+                <h6 class="m-0 fw-bold"><i class="fas fa-truck me-2"></i>Recent Production</h6>
+            </div>
             <div class="card-body p-0">
-                <table class="table table-sm mb-0">
-                    {% for item in recent_production %}
-                    <tr>
-                        <td>{{ item.timestamp|date:"d M Y" }}</td>
-                        <td>{{ item.material_type|title }}</td>
-                        <td class="text-end fw-bold">{{ item.tonnage|intcomma }}</td>
-                    </tr>
-                    {% empty %}
-                    <tr><td class="text-muted text-center">No Data</td></tr>
-                    {% endfor %}
+                <table class="table table-sm mb-0 table-hover">
+                    <tbody>
+                        {% for item in recent_production %}
+                        <tr>
+                            <td class="ps-3">{{ item.timestamp|date:"d M Y" }}</td>
+                            <td><span class="badge bg-light text-dark border">{{ item.material_type|title }}</span></td>
+                            <td class="text-end pe-3 fw-bold">{{ item.tonnage|intcomma }} t</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td class="text-muted text-center py-3">No Data</td></tr>
+                        {% endfor %}
+                    </tbody>
                 </table>
             </div>
         </div>
@@ -118,80 +166,162 @@ async function initialLoad() {
     }
 }
 
-// 2. Process Data for Chart
+// 2. Process Data for Chart & Grades
 function processData(data) {
     const prodData = data.production;
     const demandData = data.demand;
     const combined = {};
 
-    // Helper to init date obj
     const getObj = (d) => {
         const dateStr = d.slice(0,10);
-        if(!combined[dateStr]) combined[dateStr] = { date: new Date(dateStr), label: dateStr, ore:0, waste:0, demand:0 };
+        if(!combined[dateStr]) {
+            combined[dateStr] = { 
+                date: new Date(dateStr), 
+                label: dateStr, 
+                ore: 0, 
+                waste: 0, 
+                demand: 0,
+                // Vars for Grade Weighting
+                total_grade_mass: 0,      // (tonnage * actual_grade)
+                total_exp_grade_mass: 0,  // (tonnage * expected_grade)
+                ore_mass_for_grade: 0
+            };
+        }
         return combined[dateStr];
     }
 
-    // Process Production
+    // Process Production Records
     prodData.forEach(p => {
         const obj = getObj(p.timestamp);
-        if(p.material_type === 'ore') obj.ore += Number(p.tonnage);
-        else obj.waste += Number(p.tonnage);
+        const tons = Number(p.tonnage);
+        
+        if(p.material_type === 'ore') {
+            obj.ore += tons;
+            
+            // Grade Math
+            const act_g = Number(p.grade || 0);
+            const exp_g = Number(p.mine_phase__expected_grade || 0);
+            
+            obj.total_grade_mass += (tons * act_g);
+            obj.total_exp_grade_mass += (tons * exp_g);
+            obj.ore_mass_for_grade += tons;
+        } else {
+            obj.waste += tons;
+        }
     });
 
-    // Process Demand
+    // Process Demand Records
     demandData.forEach(d => {
         const obj = getObj(d.timestamp);
         obj.demand += Number(d.required_tonnage);
     });
 
-    // Flatten to Array
+    // Flatten and Calculate Averages
     originalData = Object.values(combined).map(d => {
         d.production = d.ore + d.waste;
-        d.variance = d.production - d.demand;
+        d.variance = d.ore - d.demand; // Variance matches Ore Supply vs Demand
+        
+        // Calculate Weighted Averages
+        if (d.ore_mass_for_grade > 0) {
+            d.act_grade = (d.total_grade_mass / d.ore_mass_for_grade).toFixed(2);
+            d.exp_grade = (d.total_exp_grade_mass / d.ore_mass_for_grade).toFixed(2);
+            d.grade_variance = (d.act_grade - d.exp_grade).toFixed(2);
+        } else {
+            d.act_grade = "-";
+            d.exp_grade = "-";
+            d.grade_variance = "-";
+        }
+        
         return d;
-    }).sort((a,b) => a.date - b.date);
+    }).sort((a,b) => b.date - a.date); // Sort newest first
 
-    applyDateFilter(); // Render
+    applyDateFilter();
 }
 
-// 3. Render
+// 3. Render Dashboard
 function renderDashboard(data) {
-    // Chart
+    // A. Chart
     const ctx = document.getElementById('prodDemandChart').getContext('2d');
     if(window.prodChart) window.prodChart.destroy();
+
+    // Sort for chart (Oldest -> Newest)
+    const chartData = [...data].sort((a,b) => a.date - b.date);
 
     window.prodChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: data.map(d => d.label),
+            labels: chartData.map(d => d.label),
             datasets: [
-                { label: 'Production', data: data.map(d=>d.production), borderColor: '#0d6efd', backgroundColor: 'rgba(13,110,253,0.1)', fill: true },
-                { label: 'Demand', data: data.map(d=>d.demand), borderColor: '#dc3545', borderDash: [5,5] }
+                { 
+                    label: 'Ore Mined', 
+                    data: chartData.map(d=>d.ore), 
+                    borderColor: '#0d6efd', 
+                    backgroundColor: 'rgba(13,110,253,0.1)', 
+                    fill: true,
+                    tension: 0.3
+                },
+                { 
+                    label: 'Plant Demand', 
+                    data: chartData.map(d=>d.demand), 
+                    borderColor: '#dc3545', 
+                    borderDash: [5,5],
+                    borderWidth: 2,
+                    pointStyle: 'rectRot',
+                    radius: 5
+                }
             ]
         },
-        options: { responsive: true, maintainAspectRatio: false }
+        options: { 
+            responsive: true, 
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                y: { beginAtZero: true, title: {display: true, text: 'Tonnes'} }
+            }
+        }
     });
 
-    // Log Table
+    // B. Log Table
     const tbody = document.getElementById('varianceTableBody');
     tbody.innerHTML = '';
+    
     data.forEach(d => {
+        // Color logic for Variance
+        let varColor = 'text-muted';
+        if(d.variance > 0) varColor = 'text-success';
+        if(d.variance < 0) varColor = 'text-danger';
+
+        // Color logic for Grade Variance
+        let gradeColor = 'text-muted';
+        let gradeSign = '';
+        if(d.grade_variance !== "-") {
+            const gVar = parseFloat(d.grade_variance);
+            if(gVar > 0) { gradeColor = 'text-success'; gradeSign = '+'; }
+            if(gVar < 0) { gradeColor = 'text-danger'; }
+        }
+
         const row = `<tr>
-            <td>${d.label}</td>
+            <td class="ps-3 fw-bold">${d.label}</td>
+            
             <td class="text-end">${d.ore.toLocaleString()}</td>
-            <td class="text-end">${d.waste.toLocaleString()}</td>
-            <td class="text-end fw-bold">${d.production.toLocaleString()}</td>
+            <td class="text-end text-muted">${d.waste.toLocaleString()}</td>
             <td class="text-end">${d.demand.toLocaleString()}</td>
-            <td class="text-end fw-bold ${d.variance >= 0 ? 'text-success' : 'text-danger'}">${d.variance.toLocaleString()}</td>
+            <td class="text-end fw-bold ${varColor}">${d.variance.toLocaleString()}</td>
+            
+            <td class="text-end text-muted small">${d.exp_grade}</td>
+            <td class="text-end fw-bold">${d.act_grade}</td>
+            <td class="text-end fw-bold ${gradeColor}">${gradeSign}${d.grade_variance}</td>
         </tr>`;
         tbody.innerHTML += row;
     });
 }
 
+// 4. Utilities
 function applyDateFilter() {
     let result = [...originalData];
     const startVal = document.getElementById('startDate').value;
     const endVal = document.getElementById('endDate').value;
+    
     if(startVal) result = result.filter(d => d.date >= new Date(startVal));
     if(endVal) result = result.filter(d => d.date <= new Date(endVal));
     
@@ -206,30 +336,46 @@ function resetFilter() {
 }
 
 function exportCSV() {
-    if(!filteredData.length) return alert("No data");
-    let csv = "Date,Ore,Waste,Production,Demand,Variance\n";
+    if(!filteredData.length) return alert("No data to export");
+    let csv = "Date,Ore,Waste,Production,Demand,Variance,Exp_Grade,Act_Grade,Grade_Var\n";
     filteredData.forEach(d => {
-        csv += `${d.label},${d.ore},${d.waste},${d.production},${d.demand},${d.variance}\n`;
+        csv += `${d.label},${d.ore},${d.waste},${d.production},${d.demand},${d.variance},${d.exp_grade},${d.act_grade},${d.grade_variance}\n`;
     });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'report.csv'; a.click();
+    a.href = url; a.download = 'production_report.csv'; a.click();
 }
 
 function exportPDF() {
     if(!filteredData.length) return alert("No data");
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
-    doc.text("Production Report", 14, 15);
+    
+    doc.setFontSize(18);
+    doc.text("Production & Grade Report", 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 22);
+
     doc.autoTable({
-        head: [['Date', 'Ore', 'Waste', 'Prod', 'Demand', 'Var']],
-        body: filteredData.map(d => [d.label, d.ore, d.waste, d.production, d.demand, d.variance]),
-        startY: 20
+        head: [['Date', 'Ore (t)', 'Demand (t)', 'Var (t)', 'Exp Grade', 'Act Grade', 'Grade Var']],
+        body: filteredData.map(d => [
+            d.label, 
+            d.ore, 
+            d.demand, 
+            d.variance, 
+            d.exp_grade, 
+            d.act_grade, 
+            d.grade_variance
+        ]),
+        startY: 30,
+        theme: 'grid',
+        headStyles: { fillColor: [40, 40, 40] }
     });
-    doc.save('report.pdf');
+    doc.save('production_report.pdf');
 }
 
+// Start
 initialLoad();
 </script>
 {% endblock %}

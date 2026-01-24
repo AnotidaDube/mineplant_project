@@ -1,0 +1,129 @@
+{% extends "dashboard/base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="fw-bold text-dark"><i class="fas fa-balance-scale text-primary"></i> Strategic Production Planning</h2>
+            <p class="text-muted">Align Mine Schedule with Plant Targets.</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="m-0"><i class="fas fa-search"></i> Select Period</h5>
+                </div>
+                <div class="card-body bg-white">
+                    <form method="POST">
+                        {% csrf_token %}
+                        <input type="hidden" name="search_availability" value="1">
+                        
+                        <div class="mb-3">
+                            <label class="fw-bold text-secondary">Month</label>
+                            <input type="month" name="month" class="form-control" 
+                                   value="{{ selected_month }}" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="fw-bold text-secondary">Material Type</label>
+                            <select name="material" class="form-select" required>
+                                <option value="" disabled selected>Select Material...</option>
+                                
+                                <option value="all" {% if selected_material == 'all' %}selected{% endif %} class="fw-bold">
+                                    &#9733; All Materials (ROM)
+                                </option>
+                                <hr>
+                                
+                                <option value="high_grade" {% if selected_material == 'high_grade' %}selected{% endif %}>High Grade</option>
+                                <option value="medium_grade" {% if selected_material == 'medium_grade' %}selected{% endif %}>Medium Grade</option>
+                                <option value="low_grade" {% if selected_material == 'low_grade' %}selected{% endif %}>Low Grade</option>
+                                <option value="waste" {% if selected_material == 'waste' %}selected{% endif %}>Waste</option>
+                            </select>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100 fw-bold">
+                            <i class="fas fa-search me-2"></i>Find Available Ore
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-8">
+            {% if search_active %}
+            <div class="card shadow border-primary">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h5 class="m-0">Availability & Balancing</h5>
+                    <span class="badge bg-white text-primary fw-bold">{{ selected_month }}</span>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center mb-4">
+                        <div class="col-md-6 border-end">
+                            <h6 class="text-muted text-uppercase small">Detected from Schedule</h6>
+                            
+                            <h1 class="display-4 fw-bold text-dark">
+                                {{ available_display }}<span class="fs-5 text-secondary">t</span>
+                            </h1>
+                            
+                            <span class="badge bg-info text-dark">Avg Grade: {{ available_grade }} g/t</span>
+                        </div>
+                        <div class="col-md-6 d-flex align-items-center justify-content-center">
+                            <div class="w-100">
+                                <label class="fw-bold text-success mb-2">Set Monthly Plant Target</label>
+                                <form method="POST">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="save_plan" value="1">
+                                    <input type="hidden" name="month" value="{{ selected_month }}">
+                                    <input type="hidden" name="material" value="{{ selected_material }}">
+                                    
+                                    <input type="hidden" name="available_hidden" value="{{ available_raw }}">
+                                    <input type="hidden" name="grade_hidden" value="{{ available_grade }}">
+
+                                    <div class="input-group input-group-lg mb-3">
+                                        <input type="number" name="plant_target" class="form-control border-success text-center fw-bold" 
+                                               placeholder="e.g. 780" step="any" required>
+                                        <span class="input-group-text bg-success text-white">tonnes</span>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-success btn-lg w-100 shadow-sm">
+                                        Confirm & Balance Stockpile
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-light border shadow-sm">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="fas fa-info-circle fa-2x text-info"></i>
+                            </div>
+                            <div>
+                                <strong>How Mass Balancing Works:</strong><br>
+                                {% if selected_material == 'all' %}
+                                    Since you selected <strong>All Materials</strong>, any excess will be moved to the 
+                                    <strong>ROM Stockpile (Mixed)</strong>.
+                                {% else %}
+                                    Any ore NOT sent to the plant will automatically be moved to the 
+                                    <strong>{{ selected_material|title }} Stockpile</strong>.
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="card shadow-sm border-0 bg-light h-100 d-flex align-items-center justify-content-center text-muted p-5">
+                <div class="text-center">
+                    <i class="fas fa-chart-pie fa-4x mb-3 opacity-25"></i>
+                    <h5 class="mt-3">Ready to Plan</h5>
+                    <p>Select a month and material to see what the mine is delivering.</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

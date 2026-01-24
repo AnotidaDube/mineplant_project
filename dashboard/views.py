@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 from datetime import datetime
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse, HttpResponseNotAllowed
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Avg
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.timezone import make_aware
@@ -26,7 +26,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.pagesizes import A4, letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
-
+from django.utils import timezone
 # DRF Imports
 from rest_framework import generics
 
@@ -49,7 +49,8 @@ from .models import (
     PlantDemand, 
     Stockpile, 
     PhaseSchedule, 
-    Plant
+    Plant,
+    MonthlyProductionPlan
 )
 from .serializers import (
     MinePhaseSerializer,
@@ -153,32 +154,29 @@ def mine_plant_dashboard(request):
 from django.core.serializers.json import DjangoJSONEncoder 
 
 def production_vs_demand_view(request):
-    """
-    View for the Production vs Demand dashboard.
-    FIXED: Uses DjangoJSONEncoder to prevent AJAX errors with Decimal numbers.
-    """
-    # 1. AJAX Data Fetch for Charts (The Graph & Log Table)
+    # AJAX Handler for Chart & Table
     if request.headers.get("x-requested-with") == "XMLHttpRequest":
         
-        # Get raw data values
-        prod_data = list(ProductionRecord.objects.values('timestamp', 'tonnage', 'material_type', 'plant__name'))
-        demand_data = list(PlantDemand.objects.values('timestamp', 'required_tonnage', 'plant__name'))
+        # We fetch extra fields for the Grade Variance calculation
+        prod_data = list(ProductionRecord.objects.values(
+            'timestamp', 'tonnage', 'material_type', 'grade', 
+            'mine_phase__expected_grade' # Fetch the expected grade from the related Pit
+        ))
+        demand_data = list(PlantDemand.objects.values('timestamp', 'required_tonnage'))
         
         data = {
             "production": prod_data,
             "demand": demand_data
         }
-        
-        # CRITICAL FIX: encoder=DjangoJSONEncoder handles Decimal fields correctly
         return JsonResponse(data, safe=False, encoder=DjangoJSONEncoder)
 
-    # 2. Standard Page Load (The Top Cards & Recent Tables)
-    recent_production = ProductionRecord.objects.select_related('plant').order_by('-timestamp')[:20]
+    # Standard Page Load
+    recent_production = ProductionRecord.objects.select_related('plant', 'mine_phase').order_by('-timestamp')[:20]
     recent_demand = PlantDemand.objects.select_related('plant').order_by('-timestamp')[:20]
 
     context = {
-        "page_title": "Production vs Demand Dashboard",
-        "total_production": ProductionRecord.objects.aggregate(Sum('tonnage'))['tonnage__sum'] or 0,
+        "page_title": "Production vs Demand",
+        "total_production": ProductionRecord.objects.filter(material_type='ore').aggregate(Sum('tonnage'))['tonnage__sum'] or 0,
         "total_demand": PlantDemand.objects.aggregate(Sum('required_tonnage'))['required_tonnage__sum'] or 0,
         "recent_production": recent_production,
         "recent_demand": recent_demand,
@@ -215,22 +213,55 @@ def ore_grade_tonnage_view(request):
     return render(request, 'dashboard/ore_grade_tonnage.html', context)
 
 
-def stockpile_forecast_view(request):
+def stockpile_forecast(request):
     """
-    View for Stockpile levels and variance.
+    View for Stockpile levels with Method A (Safety Stock) enforcement.
     """
     stockpiles = Stockpile.objects.all().order_by('name')
+    
+    # METHOD A CONFIGURATION:
+    # 5 Days x 780t/day = 3,900t
+    SAFETY_STOCK_TARGET = 3900 
 
     stockpile_data = []
+    chart_colors = []
+    chart_borders = []
+
     for s in stockpiles:
-        variance = s.variance()
-        variance_pct = s.variance_percent()
+        # 1. Enforce Method A Logic
+        # If the DB has 0 as the target, use the calculated Safety Stock
+        target = s.projected_tonnage if s.projected_tonnage > 0 else SAFETY_STOCK_TARGET
+        
+        # Calculate Variance against this Target
+        variance = s.current_tonnage - target
+        variance_pct = (variance / target * 100) if target > 0 else 0
+
+        # 2. Professional Color Coding
+        if 'High' in s.name:
+            color = 'rgba(25, 135, 84, 0.7)'     # Green
+            border = 'rgba(25, 135, 84, 1)'
+        elif 'Medium' in s.name:
+            color = 'rgba(255, 193, 7, 0.7)'     # Yellow/Orange
+            border = 'rgba(255, 193, 7, 1)'
+        elif 'Low' in s.name:
+            color = 'rgba(220, 53, 69, 0.7)'     # Red
+            border = 'rgba(220, 53, 69, 1)'
+        elif 'Waste' in s.name:
+            color = 'rgba(108, 117, 125, 0.7)'   # Grey
+            border = 'rgba(108, 117, 125, 1)'
+        else:
+            color = 'rgba(13, 110, 253, 0.7)'    # Blue (ROM/Mixed)
+            border = 'rgba(13, 110, 253, 1)'
+
+        chart_colors.append(color)
+        chart_borders.append(border)
+
         stockpile_data.append({
             'name': s.name,
             'current_tonnage': s.current_tonnage,
-            'projected_tonnage': s.projected_tonnage,
+            'projected_tonnage': target, # Use the "Method A" target
             'grade': s.grade,
-            'variance': round(variance, 1),
+            'variance': round(variance, 0),
             'variance_percent': round(variance_pct, 1),
         })
 
@@ -239,6 +270,8 @@ def stockpile_forecast_view(request):
         "stockpile_names_json": json.dumps([s['name'] for s in stockpile_data]),
         "actual_tonnage_json": json.dumps([s['current_tonnage'] for s in stockpile_data]),
         "projected_tonnage_json": json.dumps([s['projected_tonnage'] for s in stockpile_data]),
+        "chart_colors_json": json.dumps(chart_colors),
+        "chart_borders_json": json.dumps(chart_borders),
     }
     return render(request, 'dashboard/stockpile_forecast.html', context)
 
@@ -726,27 +759,107 @@ def add_stockpile(request):
         form = StockpileForm()
     return render(request, 'dashboard/add_stockpile.html', {'form': form})
 
+def add_production(request):
+    """
+    Handles adding production records via Text Box inputs.
+    Triggers:
+    1. Pit Progress Update (PhaseSchedule)
+    2. Stockpile Update (Mass Balance + Weighted Grade)
+    """
+    if request.method == 'POST':
+        form = ProductionRecordForm(request.POST)
+        if form.is_valid():
+            production = form.save(commit=False)
+            
+            # --- SMART LOGIC 1: Auto-fill Expected Grade ---
+            # If the user didn't type a grade, try to fetch it from the Pit Plan
+            if production.mine_phase and production.mine_phase.expected_grade and not production.grade:
+                production.grade = production.mine_phase.expected_grade
+            
+            production.save()
+            
+            # --- SMART LOGIC 2: Update Pit Progress ---
+            # Find the schedule for this phase and add the tonnage so the Map updates
+            schedule = PhaseSchedule.objects.filter(mine_phase=production.mine_phase).first()
+            if schedule:
+                schedule.removed_tonnage += production.tonnage
+                schedule.update_status() # Auto-switch to 'Active'
+                schedule.save()
+
+            # --- SMART LOGIC 3: Update Stockpile ---
+            if production.material_type == 'ore':
+                # A. Determine Stockpile Name based on Grade
+                # You can adjust these grade cut-offs as needed
+                if production.grade >= 3.5:
+                    sp_name = "High Grade Stockpile"
+                elif production.grade >= 1.5:
+                    sp_name = "Medium Grade Stockpile"
+                else:
+                    sp_name = "Low Grade Stockpile"
+                
+                sp, created = Stockpile.objects.get_or_create(name=sp_name)
+                
+                # B. Calculate New Weighted Average Grade
+                # Formula: ((Old_Tons * Old_Grade) + (New_Tons * New_Grade)) / Total_Tons
+                current_mass = sp.current_tonnage
+                current_grade = sp.grade if sp.grade else 0.0
+                new_mass = production.tonnage
+                new_grade = production.grade if production.grade else 0.0
+                
+                total_mass = current_mass + new_mass
+                
+                if total_mass > 0:
+                    weighted_grade = ((current_mass * current_grade) + (new_mass * new_grade)) / total_mass
+                    sp.grade = round(weighted_grade, 2)
+                
+                # C. Update Tonnage
+                sp.current_tonnage = total_mass
+                sp.save()
+                
+                msg_location = sp_name
+            else:
+                msg_location = "Waste Dump"
+
+            messages.success(request, f"Production Saved! {production.tonnage}t moved to {msg_location}. Pit '{production.mine_phase}' updated.")
+            return redirect('production-vs-demand')
+    else:
+        form = ProductionRecordForm(initial={'timestamp': timezone.now()})
+    
+    # --- CONTEXT FOR AUTO-COMPLETE ---
+    # We pass all phases and plants so the text box can suggest them
+    context = {
+        'form': form,
+        'phases': MinePhase.objects.all().order_by('name'),
+        'plants': Plant.objects.all().order_by('name')
+    }
+    
+    return render(request, 'dashboard/add_production.html', context)
+
+# --- 2. ADD DEMAND (STOCKPILE DEPLETION) ---
 def add_plantdemand(request):
     if request.method == 'POST':
         form = PlantDemandForm(request.POST)
         if form.is_valid():
-            form.save()
+            demand = form.save()
+            
+            # --- CHAIN REACTION: DEPLETE STOCKPILE ---
+            source = form.cleaned_data.get('source_stockpile')
+            if source:
+                source.current_tonnage -= demand.required_tonnage
+                source.save()
+                messages.success(request, f"Demand Saved! Removed {demand.required_tonnage}t from {source.name}.")
+            else:
+                # Default Logic: Try to take from 'ROM Stockpile' if no source selected
+                rom, _ = Stockpile.objects.get_or_create(name="ROM Stockpile (Mixed)")
+                rom.current_tonnage -= demand.required_tonnage
+                rom.save()
+                messages.warning(request, f"Demand Saved! Deducted from ROM Stockpile (Default).")
+
             return redirect('production-vs-demand')
     else:
         form = PlantDemandForm()
+    
     return render(request, 'dashboard/add_plantdemand.html', {'form': form})
-
-def add_production(request):
-    if request.method == 'POST':
-        form = ProductionRecordForm(request.POST)
-        if form.is_valid():
-            record = form.save(commit=False)
-            # Link is handled in form.clean() or form.save() logic
-            record.save()
-            return redirect('production-vs-demand')
-    else:
-        form = ProductionRecordForm()
-    return render(request, 'dashboard/add_production.html', {'form': form})
 
 def add_oresample(request):
     if request.method == 'POST':
@@ -1294,3 +1407,83 @@ def manage_plants(request):
 
     plants = Plant.objects.all().order_by('name')
     return render(request, 'dashboard/manage_plants.html', {'form': form, 'plants': plants})
+
+def planning_dashboard(request):
+    """
+    Strategic Tool: Matches Schedule Availability vs. Plant Demand.
+    Now supports 'all' (Wildcard) to aggregate Total Run of Mine (ROM).
+    """
+    context = {}
+    
+    # --- STEP 1: SEARCH AVAILABILITY ---
+    if request.method == "POST" and 'search_availability' in request.POST:
+        selected_month = request.POST.get('month')
+        material = request.POST.get('material')
+        
+        # 1. Base Query: Always filter by Month first
+        schedules = MaterialSchedule.objects.filter(start_date__startswith=selected_month)
+        
+        # 2. Wildcard Logic: Only filter by material if it is NOT 'all'
+        if material != 'all':
+            schedules = schedules.filter(material_type=material)
+        
+        # 3. Aggregate
+        total_mass = schedules.aggregate(Sum('mass'))['mass__sum'] or 0
+        avg_grade = schedules.aggregate(Avg('grade'))['grade__avg'] or 0
+
+        # Format for display
+        formatted_mass = f"{total_mass:,.0f}"
+        
+        context.update({
+            'search_active': True,
+            'selected_month': selected_month,
+            'selected_material': material,
+            'available_display': formatted_mass,
+            'available_raw': total_mass,
+            'available_grade': round(avg_grade, 2),
+        })
+        
+        return render(request, 'dashboard/planning_tool.html', context)
+
+    # --- STEP 2: SAVE THE PLAN ---
+    elif request.method == "POST" and 'save_plan' in request.POST:
+        month = request.POST.get('month')
+        material = request.POST.get('material')
+        
+        try:
+            available = float(request.POST.get('available_hidden'))
+            grade = float(request.POST.get('grade_hidden'))
+            target = float(request.POST.get('plant_target'))
+        except (ValueError, TypeError):
+            messages.error(request, "Invalid number format.")
+            return redirect('planning_dashboard')
+        
+        # Calculate Excess
+        to_stockpile = max(0, available - target)
+        
+        # 1. Naming the Stockpile
+        if material == 'all':
+            # If selecting ALL, excess goes to "ROM Stockpile" (Run of Mine)
+            sp_name = "ROM Stockpile (Mixed)"
+        else:
+            # Specific Grade Stockpile
+            sp_name = f"{material.replace('_', ' ').title()} Stockpile"
+            
+        stockpile, created = Stockpile.objects.get_or_create(name=sp_name)
+        stockpile.current_tonnage += to_stockpile
+        stockpile.save()
+        
+        # 2. Save Plan
+        MonthlyProductionPlan.objects.create(
+            month_period=month,
+            material_type=material,
+            available_tonnage=available,
+            avg_grade=grade,
+            plant_target=target,
+            sent_to_stockpile=to_stockpile
+        )
+        
+        messages.success(request, f"Plan Saved! {to_stockpile:,.0f}t moved to {sp_name}.")
+        return redirect('planning_dashboard')
+
+    return render(request, 'dashboard/planning_tool.html', context)

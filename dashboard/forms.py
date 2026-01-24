@@ -10,75 +10,20 @@ class PlantForm(forms.ModelForm):
             'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Enter new plant name'})
         }
 
-# 2. Updated Demand Form (Reads from the Plant List)
-class PlantDemandForm(forms.ModelForm):
-    # This automatically finds ALL plants you created in the "Manage Plants" page
-    plant = forms.ModelChoiceField(
-        queryset=Plant.objects.all().order_by('name'),
-        empty_label="Select a Plant...",
-        widget=forms.Select(attrs={'class': 'form-control'})
-    )
-
-    class Meta:
-        model = PlantDemand
-        fields = ['timestamp', 'plant', 'required_tonnage']
-        widgets = {
-            'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-control'}),
-            'required_tonnage': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Target'}),
-        }
-
 # 3. Updated Production Form (Reads from the Plant List)
 class ProductionRecordForm(forms.ModelForm):
-    # Dynamic Plant Selector
-    plant = forms.ModelChoiceField(
-        queryset=Plant.objects.all().order_by('name'),
-        empty_label="Select Destination Plant...",
-        widget=forms.Select(attrs={'class': 'form-control'})
-    )
-    
-    # Keep Phase as text if you prefer, or switch to ModelChoiceField if you have a Manage Phases page too
+    # --- Custom Text Fields ---
     mine_phase_name = forms.CharField(
-        label="Mine Phase",
-        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Source Phase'})
-    )
-
-    class Meta:
-        model = ProductionRecord
-        fields = ['timestamp', 'material_type', 'tonnage']
-        widgets = {
-            'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-control'}),
-            'material_type': forms.Select(attrs={'class': 'form-control'}),
-            'tonnage': forms.NumberInput(attrs={'class': 'form-control'}),
-        }
-    
-    # (Clean method to link Phase name remains similar to before, but Plant is handled automatically now)
-    def clean(self):
-        cleaned_data = super().clean()
-        # Only need to resolve Phase manually now
-        p_name = cleaned_data.get('mine_phase_name')
-        if p_name:
-            # Assumes you have a PhaseSchedule model
-            phase = PhaseSchedule.objects.filter(mine_phase__name__iexact=p_name.strip()).first()
-            # If linking to simple MinePhase model, adjust accordingly
-            if not phase:
-                self.add_error('mine_phase_name', "Phase not found.")
-            else:
-                self.instance.mine_phase = phase.mine_phase
-                self.instance.plant = cleaned_data.get('plant') # Auto-linked by dropdown
-        return cleaned_data
-# ==========================================
-class ProductionRecordForm(forms.ModelForm):
-    # 1. Custom Text Fields
-    mine_phase_name = forms.CharField(
-        label="Mine Phase",
+        label="Mine Phase / Pit",
         widget=forms.TextInput(attrs={
             'class': 'form-control', 
-            'placeholder': 'Type phase name (e.g. mucs_luck_pit)'
+            'placeholder': 'Type phase name (e.g. Phase 1)',
+            'list': 'phase_list' # Enables auto-complete if we add a datalist
         })
     )
     
     plant_name = forms.CharField(
-        label="Plant",
+        label="Destination Plant",
         required=False,
         widget=forms.TextInput(attrs={
             'class': 'form-control', 
@@ -86,65 +31,83 @@ class ProductionRecordForm(forms.ModelForm):
         })
     )
 
-    # 2. FORCE THE ORDER HERE
-    # This ensures Phase and Plant appear at the TOP, not the bottom
-    field_order = [
-        'mine_phase_name', 
-        'plant_name', 
-        'timestamp', 
-        'expected_tonnage', 
-        'tonnage', 
-        'grade', 
-        'recovery', 
-        'gold_price', 
-        'material_type', 
-        'source', 
-        'variance'
-    ]
-
     class Meta:
         model = ProductionRecord
-        # We exclude 'mine_phase' and 'plant' from here because we map them manually
-        fields = ['timestamp', 'expected_tonnage', 'tonnage', 'grade', 'recovery', 'gold_price', 'material_type', 'source', 'variance']
+        fields = ['timestamp', 'material_type', 'tonnage', 'grade', 'recovery']
         widgets = {
             'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-control'}),
-            'expected_tonnage': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Expected tons'}),
-            'tonnage': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Actual tons'}),
-            'material_type': forms.Select(attrs={'class': 'form-control'}),
-            'source': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Source pit or phase'}),
-            'variance': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Variance', 'readonly': 'readonly'}),
+            'material_type': forms.Select(attrs={'class': 'form-select'}),
+            'tonnage': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Actual Tonnes'}),
+            'grade': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01', 'placeholder': 'Grade (g/t)'}),
+            'recovery': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.1', 'placeholder': 'Recovery %'}),
         }
 
     def clean(self):
         cleaned_data = super().clean()
         
-        # A. Resolve Mine Phase
+        # A. Resolve Mine Phase (Text -> ID)
         p_name = cleaned_data.get('mine_phase_name')
         if p_name:
+            # Look for the phase in the database
             phase = MinePhase.objects.filter(name__iexact=p_name.strip()).first()
             if not phase:
+                # Optional: Auto-create if it doesn't exist? 
+                # For now, let's raise an error to prevent typos.
                 raise ValidationError(f"Mine Phase '{p_name}' not found. Please check spelling.")
             self.instance.mine_phase = phase
 
-        # B. Resolve Plant
+        # B. Resolve Plant (Text -> ID)
         pl_name = cleaned_data.get('plant_name')
         if pl_name:
             plant = Plant.objects.filter(name__iexact=pl_name.strip()).first()
             if not plant:
-                raise ValidationError(f"Plant '{pl_name}' not found. Check spelling.")
+                 raise ValidationError(f"Plant '{pl_name}' not found.")
             self.instance.plant = plant
-        elif not pl_name and self.instance.plant:
-            pass
-        else:
-            self.instance.plant = None
+        
+        return cleaned_data
 
-        # C. Calculate Variance
-        tonnage = cleaned_data.get('tonnage')
-        expected = cleaned_data.get('expected_tonnage')
-        if tonnage is not None and expected is not None:
-            cleaned_data['variance'] = tonnage - expected
-            self.instance.variance = tonnage - expected
+# ==========================================
+# 2. PLANT DEMAND FORM
+# ==========================================
+class PlantDemandForm(forms.ModelForm):
+    # 1. Text Box for Plant Name (Matches Production Form style)
+    plant_name = forms.CharField(
+        label="Destination Plant",
+        widget=forms.TextInput(attrs={
+            'class': 'form-control', 
+            'placeholder': 'Type plant name (e.g. Plant A)',
+            'list': 'plant_list' # Connects to the HTML auto-complete list
+        })
+    )
+    
+    # 2. Dropdown for Source Stockpile
+    source_stockpile = forms.ModelChoiceField(
+        queryset=Stockpile.objects.all(),
+        required=False,
+        label="Feed Source (Stockpile)",
+        help_text="Leave blank to auto-deduct from ROM",
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
 
+    class Meta:
+        model = PlantDemand
+        fields = ['timestamp', 'required_tonnage']
+        widgets = {
+            'timestamp': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-control'}),
+            'required_tonnage': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Target Tonnes'}),
+        }
+
+    def clean(self):
+        cleaned_data = super().clean()
+        
+        # Resolve Plant Name (Text) -> Plant Object (ID)
+        pl_name = cleaned_data.get('plant_name')
+        if pl_name:
+            plant = Plant.objects.filter(name__iexact=pl_name.strip()).first()
+            if not plant:
+                raise ValidationError(f"Plant '{pl_name}' not found. Please check spelling.")
+            self.instance.plant = plant
+            
         return cleaned_data
 
 # ==========================================

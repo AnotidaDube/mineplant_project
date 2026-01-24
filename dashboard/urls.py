@@ -24,7 +24,7 @@ urlpatterns = [
     # ==========================
     path('dashboard/production_vs_demand/', views.production_vs_demand_view, name='production-vs-demand'),
     path('dashboard/ore_grade_tonnage/', views.ore_grade_tonnage_view, name='ore-grade-tonnage'),
-    path('dashboard/stockpile_forecast/', views.stockpile_forecast_view, name='stockpile-forecast'),
+    path('dashboard/stockpile_forecast/', views.stockpile_forecast, name='stockpile-forecast'),
     path('production_summary/', views.production_summary, name='production_summary'),
     path('mass-analysis/', views.mass_analysis_view, name='mass_analysis'),
     
@@ -52,4 +52,7 @@ urlpatterns = [
     path("pit-data/", views.pit_data, name="pit-data"),
     path('pit-map/', views.pit_map_view, name='pit_map'),
     path('manage_plants/', views.manage_plants, name='manage-plants'),
+
+    #planning tool
+    path('planning/', views.planning_dashboard, name='planning_dashboard'),
 ]
