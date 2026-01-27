@@ -55,4 +55,5 @@ urlpatterns = [
 
     #planning tool
     path('planning/', views.planning_dashboard, name='planning_dashboard'),
+    path('sync_targets/', views.sync_targets_view, name='sync-targets'),
 ]
