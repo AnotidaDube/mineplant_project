@@ -21,19 +21,45 @@
 </div>
 
 <div class="row text-center mb-4">
-    <div class="col-md-3">
-        <div class="card shadow-sm border-start border-primary border-4 p-2">
+    <div class="col-md-4">
+        <div class="card shadow-sm border-start border-primary border-4 p-3 h-100">
             <small class="text-muted text-uppercase fw-bold">Total Ore Mined</small>
-            <h4 id="totalOre" class="text-primary fw-bold my-1">{{ total_production|floatformat:0|intcomma }} t</h4>
+            <h3 id="totalOre" class="text-primary fw-bold my-1">{{ total_production|floatformat:0|intcomma }} t</h3>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card shadow-sm border-start border-danger border-4 p-2">
+    
+    <div class="col-md-4">
+        <div class="card shadow-sm border-start border-{{ sr_color }} border-4 p-3 h-100">
+            <small class="text-muted text-uppercase fw-bold">Stripping Ratio (Waste:Ore)</small>
+            <h3 class="text-{{ sr_color }} fw-bold my-1">{{ stripping_ratio }}</h3>
+            <div>
+                <span class="badge bg-{{ sr_color }}">{{ sr_msg }}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card shadow-sm border-start border-danger border-4 p-3 h-100">
             <small class="text-muted text-uppercase fw-bold">Total Plant Demand</small>
-            <h4 id="totalDemand" class="text-danger fw-bold my-1">{{ total_demand|floatformat:0|intcomma }} t</h4>
+            <h3 id="totalDemand" class="text-danger fw-bold my-1">{{ total_demand|floatformat:0|intcomma }} t</h3>
         </div>
     </div>
 </div>
+
+{% if stripping_ratio > 10 %}
+<div class="alert alert-danger shadow-sm d-flex align-items-center mb-4 border-danger" role="alert">
+    <i class="fas fa-exclamation-triangle fa-2x me-3"></i>
+    <div>
+        <h5 class="alert-heading fw-bold">Optimization Required!</h5>
+        <p class="mb-0">
+            Current Stripping Ratio is <strong>{{ stripping_ratio }}</strong> (Above 10). 
+            This indicates excessive waste movement per tonne of ore, making the operation potentially unviable. 
+            <a href="#" class="fw-bold text-danger text-decoration-underline">Review Pit Design</a> or 
+            update the schedule to prioritize accessible ore zones immediately.
+        </p>
+    </div>
+</div>
+{% endif %}
 
 <div class="card shadow-sm mb-4 border-0">
     <div class="card-body py-2 d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -150,6 +176,10 @@
 
 {% block extra_js %}
 <script>
+// The JS logic remains the same as your previous version.
+// It handles the Chart and the Log Table perfectly.
+// The Stripping Ratio logic is handled server-side for the Summary Cards.
+
 let originalData = [];
 let filteredData = [];
 

@@ -51,7 +51,7 @@ urlpatterns = [
     path('export-pdf/', views.export_pdf, name='export-pdf'),
     path("pit-data/", views.pit_data, name="pit-data"),
     path('pit-map/', views.pit_map_view, name='pit_map'),
-    path('manage_plants/', views.manage_plants, name='manage-plants'),
+    path('manage_plants/', views.manage_plants, name='manage_plants'),
 
     #planning tool
     path('planning/', views.planning_dashboard, name='planning_dashboard'),

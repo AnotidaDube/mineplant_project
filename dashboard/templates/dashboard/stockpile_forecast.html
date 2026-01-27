@@ -33,9 +33,25 @@
         <span class="badge bg-primary">ROM (Mixed)</span>
     </p>
 
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <div class="input-group shadow-sm">
+                <label class="input-group-text bg-dark text-white border-secondary" for="stockpileFilter">
+                    <i class="fas fa-filter me-2"></i> View
+                </label>
+                <select id="stockpileFilter" class="form-select bg-secondary text-white border-secondary" onchange="updateChartFilter()">
+                    <option value="all">Show All Stockpiles</option>
+                    <option value="ore_only" selected>Ore Only (Recommended)</option>
+                    <option value="waste_only">Waste Only</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
     <div class="card shadow mb-4 border-0">
-        <div class="card-header bg-dark text-white fw-bold">
-            <i class="fas fa-chart-bar me-2"></i> Inventory Levels vs Projection
+        <div class="card-header bg-dark text-white fw-bold d-flex justify-content-between align-items-center">
+            <span><i class="fas fa-chart-bar me-2"></i> Inventory Levels vs Projection</span>
+            <span id="chartLabel" class="badge bg-info text-dark">Ore Only</span>
         </div>
         <div class="card-body bg-dark">
             <div id="chartContainer" style="position: relative; height: 400px;"> 
@@ -90,34 +106,96 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+let myChart = null; // Store chart instance globally
+
+// 1. Capture Full Data from Django
+// We iterate through the list to build a JS Array of Objects
+const fullData = [
+    {% for s in stockpile_data %}
+    {
+        name: "{{ s.name }}",
+        actual: {{ s.current_tonnage }},
+        target: {{ s.projected_tonnage }},
+        grade: {{ s.grade|default:0 }},
+        color: "{{ s.color }}",
+        border: "{{ s.border }}"
+    },
+    {% endfor %}
+];
+
 document.addEventListener('DOMContentLoaded', () => {
+    // Default to "Ore Only" on load to solve the squashing issue
+    updateChartFilter();
+});
+
+function updateChartFilter() {
+    const filterType = document.getElementById('stockpileFilter').value;
+    const labelBadge = document.getElementById('chartLabel');
+    
+    let filteredData = [];
+    
+    // Filtering Logic
+    if (filterType === 'all') {
+        // Show EVERYTHING (including ROM and Waste)
+        filteredData = fullData;
+        labelBadge.innerText = "All Stockpiles";
+        labelBadge.className = "badge bg-secondary";
+        
+    } else if (filterType === 'ore_only') {
+        // NEW LOGIC: Exclude Waste AND ROM/Mixed
+        // This removes the 1.8M tonne giant so the chart zooms in on the Graded Ore
+        filteredData = fullData.filter(item => 
+            !item.name.toLowerCase().includes('waste') && 
+            !item.name.toLowerCase().includes('rom') &&
+            !item.name.toLowerCase().includes('mixed')
+        );
+        labelBadge.innerText = "Graded Ore (High/Med/Low)";
+        labelBadge.className = "badge bg-info text-dark";
+        
+    } else if (filterType === 'waste_only') {
+        // Show Waste Only
+        filteredData = fullData.filter(item => item.name.toLowerCase().includes('waste'));
+        labelBadge.innerText = "Waste Only";
+        labelBadge.className = "badge bg-secondary";
+    }
+
+    renderChart(filteredData);
+}
+
+function renderChart(data) {
     const ctx = document.getElementById('stockpileChart').getContext('2d');
+    
+    // Destroy old chart to prevent "flickering" or overlapping
+    if (myChart) {
+        myChart.destroy();
+    }
 
-    // Load data from Django context
-    const stockpileNames = {{ stockpile_names_json|safe }};
-    const actualTonnage = {{ actual_tonnage_json|safe }};
-    const projectedTonnage = {{ projected_tonnage_json|safe }};
-    const chartColors = {{ chart_colors_json|safe }};
-    const chartBorders = {{ chart_borders_json|safe }};
+    // Map data for Chart.js
+    const labels = data.map(d => d.name);
+    const actuals = data.map(d => d.actual);
+    const targets = data.map(d => d.target);
+    const colors = data.map(d => d.color);
+    const borders = data.map(d => d.border);
 
-    new Chart(ctx, {
+    myChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: stockpileNames,
+            labels: labels,
             datasets: [
                 {
                     label: 'Actual Inventory',
-                    data: actualTonnage,
-                    backgroundColor: chartColors, // Dynamic Colors
-                    borderColor: chartBorders,
+                    data: actuals,
+                    backgroundColor: colors,
+                    borderColor: borders,
                     borderWidth: 1,
                     order: 1
                 },
                 {
                     label: 'Safety Target',
-                    data: projectedTonnage,
-                    type: 'line', // Show target as a line overlay
+                    data: targets,
+                    type: 'line',
                     borderColor: '#ffffff',
                     borderDash: [5, 5],
                     pointBackgroundColor: '#ffffff',
@@ -132,16 +210,17 @@ document.addEventListener('DOMContentLoaded', () => {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    labels: { color: '#ffffff' }
-                },
+                legend: { labels: { color: '#ffffff' } },
                 tooltip: {
                     callbacks: {
                         afterBody: function(context) {
                             const idx = context[0].dataIndex;
-                            const diff = actualTonnage[idx] - projectedTonnage[idx];
-                            const label = diff >= 0 ? "Surplus" : "Deficit";
-                            return `${label}: ${diff.toLocaleString()} t`;
+                            const item = data[idx];
+                            const diff = item.actual - item.target;
+                            return [
+                                `Grade: ${item.grade.toFixed(2)} g/t`,
+                                `${diff >= 0 ? "Surplus" : "Deficit"}: ${diff.toLocaleString()} t`
+                            ];
                         }
                     }
                 }
@@ -160,7 +239,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
-});
+}
 
 // --- CSV Export Function ---
 function exportStockpileCSV() {

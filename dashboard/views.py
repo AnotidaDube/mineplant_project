@@ -154,13 +154,16 @@ def mine_plant_dashboard(request):
 from django.core.serializers.json import DjangoJSONEncoder 
 
 def production_vs_demand_view(request):
-    # AJAX Handler for Chart & Table
+    """
+    Dashboard showing Production vs Demand with Stripping Ratio Analysis.
+    """
+    # 1. AJAX Handler for Chart & Table (Data Fetch)
     if request.headers.get("x-requested-with") == "XMLHttpRequest":
         
-        # We fetch extra fields for the Grade Variance calculation
+        # Fetch detailed data for JS processing
         prod_data = list(ProductionRecord.objects.values(
             'timestamp', 'tonnage', 'material_type', 'grade', 
-            'mine_phase__expected_grade' # Fetch the expected grade from the related Pit
+            'mine_phase__expected_grade'
         ))
         demand_data = list(PlantDemand.objects.values('timestamp', 'required_tonnage'))
         
@@ -170,14 +173,44 @@ def production_vs_demand_view(request):
         }
         return JsonResponse(data, safe=False, encoder=DjangoJSONEncoder)
 
-    # Standard Page Load
+    # 2. Standard Page Load (Server-Side Calculations for Summary Cards)
     recent_production = ProductionRecord.objects.select_related('plant', 'mine_phase').order_by('-timestamp')[:20]
     recent_demand = PlantDemand.objects.select_related('plant').order_by('-timestamp')[:20]
 
+    # --- STRIPPING RATIO ANALYSIS ---
+    # Calculate Total Ore vs Total Waste
+    total_ore = ProductionRecord.objects.filter(material_type='ore').aggregate(Sum('tonnage'))['tonnage__sum'] or 0
+    total_waste = ProductionRecord.objects.filter(material_type='waste').aggregate(Sum('tonnage'))['tonnage__sum'] or 0
+    total_demand = PlantDemand.objects.aggregate(Sum('required_tonnage'))['required_tonnage__sum'] or 0
+
+    # Calculate Ratio (Waste / Ore)
+    if total_ore > 0:
+        stripping_ratio = total_waste / total_ore
+    else:
+        stripping_ratio = 0.0
+
+    # Determine Traffic Light Status
+    if stripping_ratio > 10:
+        sr_color = "danger"   # Red (Critical)
+        sr_msg = "CRITICAL: Optimization Required"
+    elif stripping_ratio > 5:
+        sr_color = "warning"  # Yellow (Warning)
+        sr_msg = "WARNING: Moderate Dilution Risk"
+    else:
+        sr_color = "success"  # Green (Optimal)
+        sr_msg = "OPTIMAL: Viable Operation"
+
     context = {
         "page_title": "Production vs Demand",
-        "total_production": ProductionRecord.objects.filter(material_type='ore').aggregate(Sum('tonnage'))['tonnage__sum'] or 0,
-        "total_demand": PlantDemand.objects.aggregate(Sum('required_tonnage'))['required_tonnage__sum'] or 0,
+        "total_production": total_ore, # We treat 'Total Production' as Ore for the main card
+        "total_waste": total_waste,    # Added for context if needed
+        "total_demand": total_demand,
+        
+        # New Analysis Context
+        "stripping_ratio": round(stripping_ratio, 2),
+        "sr_color": sr_color,
+        "sr_msg": sr_msg,
+        
         "recent_production": recent_production,
         "recent_demand": recent_demand,
     }
@@ -213,10 +246,17 @@ def ore_grade_tonnage_view(request):
     return render(request, 'dashboard/ore_grade_tonnage.html', context)
 
 
+import json
+from django.shortcuts import render, redirect
+from .models import Stockpile
+from .forms import StockpileForm
+
 def stockpile_forecast(request):
     """
     View for Stockpile levels with Method A (Safety Stock) enforcement.
+    Sends ALL data to the template, allowing the user to filter via JavaScript.
     """
+    # 1. Fetch ALL Stockpiles (We do not filter here anymore)
     stockpiles = Stockpile.objects.all().order_by('name')
     
     # METHOD A CONFIGURATION:
@@ -224,8 +264,6 @@ def stockpile_forecast(request):
     SAFETY_STOCK_TARGET = 3900 
 
     stockpile_data = []
-    chart_colors = []
-    chart_borders = []
 
     for s in stockpiles:
         # 1. Enforce Method A Logic
@@ -236,7 +274,8 @@ def stockpile_forecast(request):
         variance = s.current_tonnage - target
         variance_pct = (variance / target * 100) if target > 0 else 0
 
-        # 2. Professional Color Coding
+        # 2. Professional Color Coding (Passed to JS)
+        # We assign colors here so they stay consistent regardless of sorting
         if 'High' in s.name:
             color = 'rgba(25, 135, 84, 0.7)'     # Green
             border = 'rgba(25, 135, 84, 1)'
@@ -253,25 +292,21 @@ def stockpile_forecast(request):
             color = 'rgba(13, 110, 253, 0.7)'    # Blue (ROM/Mixed)
             border = 'rgba(13, 110, 253, 1)'
 
-        chart_colors.append(color)
-        chart_borders.append(border)
-
         stockpile_data.append({
             'name': s.name,
             'current_tonnage': s.current_tonnage,
-            'projected_tonnage': target, # Use the "Method A" target
+            'projected_tonnage': target,
             'grade': s.grade,
             'variance': round(variance, 0),
             'variance_percent': round(variance_pct, 1),
+            'color': color,
+            'border': border
         })
 
+    # We pass the raw list of dicts to the template
+    # The template will convert this to a JS Object for filtering
     context = {
         "stockpile_data": stockpile_data,
-        "stockpile_names_json": json.dumps([s['name'] for s in stockpile_data]),
-        "actual_tonnage_json": json.dumps([s['current_tonnage'] for s in stockpile_data]),
-        "projected_tonnage_json": json.dumps([s['projected_tonnage'] for s in stockpile_data]),
-        "chart_colors_json": json.dumps(chart_colors),
-        "chart_borders_json": json.dumps(chart_borders),
     }
     return render(request, 'dashboard/stockpile_forecast.html', context)
 
