@@ -1,0 +1,59 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1 class="h3 mb-4 text-gray-800">Pit Configuration</h1>
+
+    <div class="card shadow mb-4">
+        <div class="card-header py-3 bg-dark text-white">
+            <h6 class="m-0 font-weight-bold">Map Database Pits to CSV Names</h6>
+        </div>
+        <div class="card-body">
+            
+            <div class="alert alert-warning">
+                <i class="fas fa-lightbulb mr-2"></i>
+                <strong>Tip:</strong> If your CSV file uses a different name (e.g., <em>"macsluck_pit"</em>) than your database (e.g., <em>"Mucs Luck"</em>), type the CSV name in the box below so the system can match them.
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-bordered table-striped" width="100%" cellspacing="0">
+                    <thead class="thead-light">
+                        <tr>
+                            <th width="30%">Official Database Name</th>
+                            <th width="50%">CSV Name (Alias)</th>
+                            <th width="20%">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pit in pits %}
+                        <tr>
+                            <td class="align-middle font-weight-bold text-primary">
+                                {{ pit.name }}
+                            </td>
+                            
+                            <form method="post">
+                                {% csrf_token %}
+                                <input type="hidden" name="pit_id" value="{{ pit.id }}">
+                                
+                                <td class="align-middle">
+                                    <input type="text" name="csv_match_name" 
+                                           value="{{ pit.csv_match_name }}" 
+                                           class="form-control" 
+                                           placeholder="Type exactly what is in the CSV...">
+                                </td>
+                                
+                                <td class="align-middle">
+                                    <button type="submit" class="btn btn-success btn-sm btn-block">
+                                        <i class="fas fa-save mr-1"></i> Save
+                                    </button>
+                                </td>
+                            </form>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

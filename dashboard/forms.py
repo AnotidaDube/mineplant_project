@@ -217,3 +217,11 @@ class BlockModelUploadForm(forms.Form):
         help_text="Export from Surpac using 'coooon.con'. Columns: Y, X, Z",
         required=False
     )
+
+class PitAliasForm(forms.ModelForm):
+    class Meta:
+        model = MinePhase
+        fields = ['csv_match_name']
+        widgets = {
+            'csv_match_name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'e.g. macsluck_pit'}),
+        }

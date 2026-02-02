@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 from datetime import datetime
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse, HttpResponseNotAllowed
-from django.db.models import Sum, Count, Avg
+from django.db.models import Sum, Count, Avg, F, FloatField, ExpressionWrapper
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.timezone import make_aware
@@ -40,7 +40,8 @@ from .forms import (
     PhaseScheduleForm, 
     ExpectedValuesForm,
     BlockModelUploadForm,
-    PlantForm
+    PlantForm,
+    PitAliasForm
 )
 from .models import (
     MinePhase, 
@@ -50,7 +51,8 @@ from .models import (
     Stockpile, 
     PhaseSchedule, 
     Plant,
-    MonthlyProductionPlan
+    MonthlyProductionPlan,
+    FinancialSettings
 )
 from .serializers import (
     MinePhaseSerializer,
@@ -1081,13 +1083,11 @@ def mass_analysis_view(request):
 
     return render(request, 'dashboard/mass_analysis.html', context)
 
-# dashboard/views.py
-
 def upload_schedule_view(request):
     """
-    Robust Importer that handles 'MineSched' style CSVs with metadata headers.
-    It automatically finds the header row and maps 'Mining Location' to 'Phase'.
-    INCLUDES: 'Ghost Scenario' cleanup (deletes scenario if upload fails).
+    Robust Importer V7 - The "Smart Material" Fix
+    1. Finds 'Material' column even if named differently.
+    2. Forces 'low_grad' to be treated as ORE (Fixes the $0 Revenue).
     """
     if request.method == "POST":
         form = ScheduleUploadForm(request.POST, request.FILES)
@@ -1095,96 +1095,137 @@ def upload_schedule_view(request):
             scenario_name = form.cleaned_data['scenario_name']
             csv_file = request.FILES['csv_file']
 
-            # 1. Safety Check
-            if not csv_file.name.endswith('.csv'):
+            if not csv_file.name.lower().endswith('.csv'):
                 messages.error(request, "Error: Please upload a CSV file.")
-                return render(request, 'dashboard/upload_schedule.html', {'form': form})
+                return redirect('upload_schedule')
 
-            # Create Scenario (We save it now, but delete it later if parsing fails)
             scenario = ScheduleScenario.objects.create(name=scenario_name)
 
             try:
-                # 2. Decode and Read Line-by-Line
-                decoded_file = csv_file.read().decode('utf-8').splitlines()
+                # 1. READ FILE
+                decoded_file = csv_file.read().decode('utf-8-sig').splitlines()
                 
-                # 3. Find the Header Row dynamically
-                # We look for the row that starts with 'Period Number'
+                # 2. FIND HEADER ROW
                 header_row_index = -1
-                for i, line in enumerate(decoded_file):
-                    if 'Period Number' in line:
+                for i, line in enumerate(decoded_file[:20]):
+                    if 'period' in line.lower():
                         header_row_index = i
                         break
                 
                 if header_row_index == -1:
-                    raise Exception("Could not find the 'Period Number' header row.")
+                    raise Exception("Could not find a row with 'Period' in the first 20 lines.")
 
-                # 4. Parse Data starting from the header row
-                # We join the rest of the lines back into a string for DictReader
+                # 3. PARSE DATA
                 data_content = "\n".join(decoded_file[header_row_index:])
                 io_string = io.StringIO(data_content)
                 reader = csv.DictReader(io_string)
 
+                # CLEAN HEADERS
+                if reader.fieldnames:
+                    reader.fieldnames = [name.replace('\n', ' ').strip() for name in reader.fieldnames]
+
+                print(f"DEBUG: Cleaned Headers: {reader.fieldnames}")
+
+                # --- SMART COLUMN MAPPING (The Fix) ---
+                def find_col(options):
+                    for field in reader.fieldnames:
+                        if field.lower() in options:
+                            return field
+                    return None
+
+                # Find the critical columns, whatever they are named
+                mat_col = find_col(['material', 'material type', 'dest material', 'rock type', 'mat'])
+                vol_col = find_col(['volume', 'vol', 'bank volume'])
+                mass_col = find_col(['mass', 'tonnes', 'tons', 't'])
+
                 count = 0
-                for row in reader:
-                    # Skip empty rows (sometimes exist at bottom of Excel exports)
-                    if not row.get('Period Number'):
-                        continue
+                errors = []
+                
+                for row_idx, row in enumerate(reader):
+                    p_num = row.get('Period') or row.get('Period Number')
+                    if not p_num: continue
 
                     try:
-                        # CLEANING FUNCTIONS
-                        def clean_num(value):
-                            if not value: return 0.0
-                            return float(str(value).replace(',', '').strip())
+                        def clean_num(val):
+                            if not val: return 0.0
+                            return float(str(val).replace(',', '').strip())
 
-                        def clean_date(value):
-                            # Handle dd/mm/yyyy
-                            return datetime.strptime(value.strip(), '%d/%m/%Y').date()
+                        def clean_date(val):
+                            if not val: return None
+                            val = val.strip()
+                            for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y'):
+                                try:
+                                    return datetime.strptime(val, fmt).date()
+                                except ValueError:
+                                    continue
+                            return None
 
-                        # MAPPING
-                        # We map 'Mining Location' -> 'phase_name'
-                        # We map 'avarge' -> 'grade'
+                        # --- SMART MATERIAL LOGIC ---
+                        if mat_col and row.get(mat_col):
+                            raw_mat = row.get(mat_col).lower()
+                        else:
+                            raw_mat = 'waste' # Default only if column missing
+
+                        # CRITICAL FIX: Catch your CSV typo 'low_grad'
+                        # This ensures it is NOT treated as waste in the cash flow
+                        if 'low_grad' in raw_mat or 'medium_' in raw_mat:
+                            raw_mat = 'ore' 
+                        elif 'waste' in raw_mat:
+                            raw_mat = 'waste'
+
+                        # Map other columns
+                        phase = row.get('Source') or row.get('Mining Location', 'Unknown')
+                        grade_val = row.get('avarage') or row.get('Grade') or row.get('average')
+                        
                         MaterialSchedule.objects.create(
                             scenario=scenario,
-                            period=int(row['Period Number']),
-                            phase_name=row.get('Mining Location', 'Unknown'), # Uses CSV Location as Phase
+                            period=int(p_num),
+                            phase_name=phase,
+                            start_date=clean_date(row.get('Start') or row.get('Start Date')),
+                            end_date=clean_date(row.get('End') or row.get('End Date')),
+                            source=phase,
+                            destination=row.get('Destination') or row.get('Dest', ''),
                             
-                            start_date=clean_date(row['Start Date']),
-                            end_date=clean_date(row['End Date']),
+                            material_type=raw_mat, # Using our fixed material type
                             
-                            source=row.get('Mining Location', ''),
-                            destination=row.get('Mining Location', ''), # Or map to a destination if exists
-                            
-                            material_type=row.get('Material', 'waste').lower(),
-                            
-                            volume=clean_num(row.get('Volume', 0)),
-                            mass=clean_num(row.get('Mass', 0)),
-                            haul_distance=clean_num(row.get('Length', 0)),
-                            
-                            # Handle the typo 'avarge' from your specific CSV
-                            grade=clean_num(row.get('avarge', 0)) 
+                            volume=clean_num(row.get(vol_col)) if vol_col else clean_num(row.get('Volume')),
+                            mass=clean_num(row.get(mass_col)) if mass_col else clean_num(row.get('Mass')),
+                            haul_distance=clean_num(row.get('Length') or row.get('Haul') or row.get('Haul Route')),
+                            grade=clean_num(grade_val) 
                         )
                         count += 1
                     except Exception as e:
-                        print(f"Skipping row {count}: {e}")
+                        if len(errors) < 3:
+                            errors.append(f"Row {row_idx + 1}: {str(e)}")
                         continue
 
-                messages.success(request, f"Success! Uploaded {count} schedule records from '{csv_file.name}'.")
-                return redirect('schedule_dashboard')
+                # Report Results
+                if count > 0:
+                    messages.success(request, f"Success! Uploaded {count} rows to '{scenario.name}'.")
+                else:
+                    scenario.delete()
+                    if errors:
+                        messages.error(request, f"Failed. First error: {errors[0]}")
+                    else:
+                        messages.warning(request, "Found correct headers, but no rows had a Period Number.")
+                
+                return redirect('upload_schedule')
 
             except Exception as e:
-                # --- GHOST SCENARIO CLEANUP ---
-                # If anything went wrong above, delete the empty/broken scenario
                 scenario.delete()
-                # ------------------------------
-                messages.error(request, f"Upload Failed: {str(e)}")
-                return render(request, 'dashboard/upload_schedule.html', {'form': form})
+                messages.error(request, f"Critical Upload Failed: {str(e)}")
+                return redirect('upload_schedule')
             
     else:
         form = ScheduleUploadForm()
 
-    return render(request, 'dashboard/upload_schedule.html', {'form': form})
+    # Get Scenarios for the History Table
+    scenarios = ScheduleScenario.objects.all().order_by('-created_at')
 
-# dashboard/views.py
+    return render(request, 'dashboard/upload_schedule.html', {
+        'form': form, 
+        'scenarios': scenarios 
+    })
 
 def auto_update_phase_targets():
     """
@@ -1525,34 +1566,144 @@ def planning_dashboard(request):
 
     return render(request, 'dashboard/planning_tool.html', context)
 
-def sync_targets_view(request):
+def sync_targets_view(request, pk):
     """
-    Updates Pit Targets from the CSV.
-    FALLBACK INCLUDED: If no match is found, it forces a target of 3.5 g/t 
-    so you can test the Loss Chart immediately.
+    Syncs targets AND updates the 'Active' status flag.
     """
+    # 1. Get the scenario the user clicked
+    scenario = get_object_or_404(ScheduleScenario, pk=pk)
+    
+    # 2. MARK ALL OTHERS AS INACTIVE (The Traffic Light Logic)
+    # This turns off the green light for everyone else
+    ScheduleScenario.objects.update(is_active=False)
+    
+    # 3. MARK THIS ONE AS ACTIVE
+    scenario.is_active = True
+    scenario.save()
+    
+    # 4. Perform the actual syncing of numbers (Your existing logic)
     updated_count = 0
     active_pits = MinePhase.objects.all()
     
+    print(f"--- SYNCING FROM: {scenario.name} ---")
+
     for pit in active_pits:
-        # 1. Try to find a real match in the CSV
-        match = MaterialSchedule.objects.filter(phase_name__icontains=pit.name).first()
+        match = MaterialSchedule.objects.filter(
+            scenario=scenario, 
+            phase_name__icontains=pit.name
+        ).first()
         
         if match:
-            # Found a match! Use the real grade from the file
             pit.expected_grade = match.grade
             pit.save()
             updated_count += 1
-        else:
-            # --- CHEAT MODE FOR TESTING ---
-            # If we can't find the name in the CSV, just give it a target
-            # so the Loss Chart works.
-            pit.expected_grade = 3.5 
-            pit.save()
-            updated_count += 1
-            print(f"Test Mode: Forced {pit.name} target to 3.5 g/t")
             
-    messages.success(request, f"✅ Updated targets for {updated_count} pits! (Used fallback if no match found)")
+    messages.success(request, f"✅ Activated '{scenario.name}' and updated {updated_count} pits.")
+    return redirect('upload_schedule')
+
+def pit_config_view(request):
+    """
+    Allows users to map Pits to CSV Names without using the Admin Panel.
+    """
+    pits = MinePhase.objects.all().order_by('name')
+
+    if request.method == 'POST':
+        # We find which pit is being updated based on the hidden input 'pit_id'
+        pit_id = request.POST.get('pit_id')
+        pit = get_object_or_404(MinePhase, pk=pit_id)
+        
+        form = PitAliasForm(request.POST, instance=pit)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Updated alias for '{pit.name}'")
+            return redirect('pit_config')
+        else:
+            messages.error(request, "Error updating alias.")
     
-    # Reload the page you were on
-    return redirect('processing-loss-dashboard')
+    return render(request, 'dashboard/pit_config.html', {'pits': pits})
+
+def cash_flow_view(request, pk):
+    scenario = get_object_or_404(ScheduleScenario, pk=pk)
+    
+    # 1. Settings
+    settings, created = FinancialSettings.objects.get_or_create(scenario=scenario)
+    
+    if request.method == "POST":
+        settings.gold_price = float(request.POST.get('gold_price', 1800))
+        settings.plant_capacity = float(request.POST.get('plant_capacity', 23400))
+        settings.base_mining_cost = float(request.POST.get('base_mining_cost', 4.5))
+        settings.save()
+        messages.success(request, "Financial parameters updated!")
+        return redirect('cash_flow', pk=pk)
+
+    # 2. Data Processing
+    periods = MaterialSchedule.objects.filter(scenario=scenario).values('period').distinct().order_by('period')
+    
+    report_data = []
+    cumulative_cash = 0
+    
+    for p in periods:
+        pid = p['period']
+        period_rows = MaterialSchedule.objects.filter(scenario=scenario, period=pid)
+        
+        total_mass = period_rows.aggregate(s=Sum('mass'))['s'] or 0
+        
+        # --- THE FIX IS HERE ---
+        # Instead of looking for "ore", we EXCLUDE "waste".
+        # This captures 'low_grade', 'medium_grade', 'high_grade' automatically.
+        ore_rows = period_rows.exclude(material_type__icontains='waste')
+        
+        ore_mass = ore_rows.aggregate(s=Sum('mass'))['s'] or 0
+        waste_mass = total_mass - ore_mass
+        
+        # Calculate Grade (Weighted Average)
+        grade_product = 0
+        for row in ore_rows:
+            grade_product += (row.mass * row.grade)
+        avg_grade = (grade_product / ore_mass) if ore_mass > 0 else 0
+        
+        # --- SPLIT LOGIC ---
+        plant_cap = settings.plant_capacity
+        if ore_mass > plant_cap:
+            processed_tonnes = plant_cap
+            stockpiled_tonnes = ore_mass - plant_cap
+        else:
+            processed_tonnes = ore_mass
+            stockpiled_tonnes = 0
+            
+        # --- FINANCIALS ---
+        recovered_grade = avg_grade * settings.recovery_rate
+        value_per_tonne = recovered_grade * (settings.gold_price / 31.1)
+        
+        revenue = processed_tonnes * value_per_tonne
+        stockpile_value = stockpiled_tonnes * value_per_tonne
+        
+        mining_cost = total_mass * settings.base_mining_cost 
+        processing_cost = processed_tonnes * settings.processing_cost
+        
+        total_cost = mining_cost + processing_cost
+        net_cash = revenue - total_cost
+        cumulative_cash += net_cash
+        
+        # --- REPORT DATA ---
+        report_data.append({
+            'period': pid,
+            'ore_mined': int(ore_mass),
+            'waste_mined': int(waste_mass),
+            'processed': int(processed_tonnes),
+            'stockpiled': int(stockpiled_tonnes),
+            'grade': round(avg_grade, 2),
+            'revenue': int(revenue),
+            'stockpile_val': int(stockpile_value),
+            'mining_cost': int(mining_cost),
+            'processing_cost': int(processing_cost),
+            'total_cost': int(total_cost),
+            'net_cash': int(net_cash),
+            'cumulative': int(cumulative_cash)
+        })
+
+    return render(request, 'dashboard/cash_flow.html', {
+        'scenario': scenario,
+        'settings': settings,
+        'report_data': report_data
+    })

@@ -8,6 +8,11 @@ from django.conf import settings
 class MinePhase(models.Model):
     """Represents a mining phase or pushback within a pit."""
     name = models.CharField(max_length=100)
+    csv_match_name = models.CharField(
+        max_length=100, 
+        blank=True, 
+        help_text="The name used in the CSV file (e.g., 'macsluck'). If empty, uses the official name."
+    )
     pit = models.CharField(max_length=100)
     phase_number = models.PositiveIntegerField()
     sequence_order = models.PositiveIntegerField()
@@ -256,6 +261,7 @@ class ScheduleScenario(models.Model):
     """Groups schedule data (e.g., 'mucs_2026')."""
     name = models.CharField(max_length=100, default="mucs_2026")
     created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name
@@ -321,3 +327,19 @@ class MonthlyProductionPlan(models.Model):
 
     def __str__(self):
         return f"{self.month_period} Plan ({self.material_type})"
+    
+class FinancialSettings(models.Model):
+    scenario = models.OneToOneField(ScheduleScenario, on_delete=models.CASCADE, related_name='financials')
+    
+    # Global Settings
+    gold_price = models.FloatField(default=1800.0, help_text="USD per Ounce")
+    recovery_rate = models.FloatField(default=0.90, help_text="90% = 0.9")
+    plant_capacity = models.FloatField(default=23400.0, help_text="Monthly Plant Capacity (tonnes)")
+    
+    # Base Costs
+    processing_cost = models.FloatField(default=36.0, help_text="USD per Tonne")
+    base_mining_cost = models.FloatField(default=4.50, help_text="USD per Tonne (Base)")
+
+    def __str__(self):
+        return f"Financials for {self.scenario.name}"
+    

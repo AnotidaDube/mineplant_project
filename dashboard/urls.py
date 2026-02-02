@@ -18,6 +18,8 @@ urlpatterns = [
     path('schedule-dashboard/', views.schedule_dashboard_view, name='schedule_dashboard'),
     path('reconciliation/', views.reconciliation_view, name='reconciliation'),
     path('auto-generate/', views.auto_generate_phases, name='auto_generate_phases'),
+    path('sync_targets/<int:pk>/', views.sync_targets_view, name='sync-targets'),
+    path('configuration/pits/', views.pit_config_view, name='pit_config'),
 
     # ==========================
     # 3. Operational Analysis
@@ -33,6 +35,7 @@ urlpatterns = [
     # ==========================
     path('processing/loss/', views.processing_loss_dashboard, name='processing-loss-dashboard'),
     path('processing/loss/data/', views.processing_loss_data, name='processing-loss-data'),
+    path('financials/<int:pk>/', views.cash_flow_view, name='cash_flow'),
 
     # ==========================
     # 5. Data Entry Forms

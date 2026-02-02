@@ -8,74 +8,119 @@
     </div>
 
     <div class="row justify-content-center">
-        <div class="col-lg-6">
+        <div class="col-lg-8"> 
             
             <div class="card shadow mb-4">
-                <div class="card-header py-3">
-                    <h6 class="m-0 font-weight-bold text-primary">Upload CSV File</h6>
+                <div class="card-header py-3 bg-primary text-white">
+                    <h6 class="m-0 font-weight-bold">Upload New Schedule</h6>
                 </div>
                 <div class="card-body">
-                    <div class="alert alert-info">
-                        <strong>Instructions:</strong>
-                        <ul class="mb-0 pl-3 small">
-                            <li>Export your schedule from MineSched as a CSV.</li>
-                            <li>Ensure headers are: Period, Start Date, End Date, Source, Destination, Material, Volume, Mass, Length, Grade.</li>
-                            <li>Date format should be <strong>dd/mm/yyyy</strong>.</li>
-                        </ul>
+                    <div class="alert alert-info border-left-primary">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-info-circle fa-2x mr-3"></i>
+                            <div>
+                                <strong>Instructions (Use the 'Production Upload' Report):</strong>
+                                <ul class="mb-0 pl-3 mt-1 small">
+                                    <li>Export your schedule as a CSV.</li>
+                                    <li><strong>Required Headers:</strong> Period, Start, End, Source, Material, Volume, Mass, Length.</li>
+                                    <li><strong>Grade Column:</strong> The system accepts <strong>'avarage'</strong> (from MineSched) or 'Grade'.</li>
+                                    <li><strong>Date Format:</strong> Must be <strong>dd/mm/yyyy</strong> (e.g., 01/01/2026).</li>
+                                </ul>
+                            </div>
+                        </div>
                     </div>
 
-                    <form method="post" enctype="multipart/form-data">
+                    <form method="post" enctype="multipart/form-data" action="{% url 'upload_schedule' %}">
                         {% csrf_token %}
                         
-                        <div class="mb-3">
-                            <label for="{{ form.scenario_name.id_for_label }}" class="form-label font-weight-bold">
-                                {{ form.scenario_name.label }}
-                            </label>
-                            {{ form.scenario_name }}
-                            {% if form.scenario_name.errors %}
-                                <div class="text-danger small">{{ form.scenario_name.errors }}</div>
-                            {% endif %}
-                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="{{ form.scenario_name.id_for_label }}" class="form-label font-weight-bold text-gray-800">
+                                    {{ form.scenario_name.label }}
+                                </label>
+                                {{ form.scenario_name }}
+                                {% if form.scenario_name.errors %}
+                                    <div class="text-danger small mt-1">{{ form.scenario_name.errors }}</div>
+                                {% endif %}
+                            </div>
 
-                        <div class="mb-4">
-                            <label for="{{ form.csv_file.id_for_label }}" class="form-label font-weight-bold">
-                                {{ form.csv_file.label }}
-                            </label>
-                            {{ form.csv_file }}
-                            {% if form.csv_file.errors %}
-                                <div class="text-danger small">{{ form.csv_file.errors }}</div>
-                            {% endif %}
+                            <div class="col-md-6 mb-4">
+                                <label for="{{ form.csv_file.id_for_label }}" class="form-label font-weight-bold text-gray-800">
+                                    {{ form.csv_file.label }}
+                                </label>
+                                {{ form.csv_file }}
+                                {% if form.csv_file.errors %}
+                                    <div class="text-danger small mt-1">{{ form.csv_file.errors }}</div>
+                                {% endif %}
+                            </div>
                         </div>
 
                         <hr>
 
-                        <button type="submit" class="btn btn-primary btn-block btn-lg">
+                        <button type="submit" class="btn btn-primary btn-block btn-lg shadow-sm">
                             <i class="fas fa-upload fa-sm text-white-50 mr-2"></i> Upload Schedule
                         </button>
                     </form>
                 </div>
             </div>
 
-            <div class="card shadow mb-4 border-left-warning">
-                <div class="card-header py-3 bg-warning text-dark d-flex justify-content-between align-items-center">
-                    <h6 class="m-0 font-weight-bold"><i class="fas fa-sync-alt mr-2"></i>Update Active Targets</h6>
-                    <a href="{% url 'sync-targets' %}" class="btn btn-dark btn-sm shadow-sm">
-                        Sync Now
-                    </a>
+            <div class="card shadow mb-4">
+                <div class="card-header py-3 bg-secondary text-white">
+                    <h6 class="m-0 font-weight-bold">Available Schedules (History)</h6>
                 </div>
                 <div class="card-body">
-                    <div class="d-flex align-items-center">
-                        <div class="mr-3">
-                            <div class="icon-circle bg-gray-200">
-                                <i class="fas fa-magic text-warning"></i>
-                            </div>
-                        </div>
-                        <div>
-                            <span class="font-weight-bold text-gray-800">Sync Database with CSV</span>
-                            <p class="mb-0 small text-muted">
-                                This reads the grades from your uploaded schedule and automatically updates the <strong>Expected Grade</strong> for all your active pits.
-                            </p>
-                        </div>
+                    <p class="small text-muted mb-3">
+                        The green highlighted row is your <strong>Active Plan</strong>. The system compares actual production against this plan.
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover" width="100%" cellspacing="0">
+                            <thead class="thead-light">
+                                <tr>
+                                    <th>Scenario Name</th>
+                                    <th>Uploaded Date</th>
+                                    <th>Status / Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for s in scenarios %}
+                                <tr class="{% if s.is_active %}table-success{% endif %}">
+                                    
+                                    <td class="align-middle text-dark">
+                                        <strong>{{ s.name }}</strong>
+                                        {% if s.is_active %}
+                                            <span class="badge badge-success ml-2 shadow-sm">CURRENTLY ACTIVE</span>
+                                        {% endif %}
+                                    </td>
+                                    
+                                    <td class="align-middle">{{ s.created_at|date:"d M Y, H:i" }}</td>
+                                    
+                                    <td class="align-middle">
+                                        
+                                        <a href="{% url 'cash_flow' s.id %}" class="btn btn-info btn-sm shadow-sm mr-1" title="Analyze Cash Flow">
+                                            <i class="fas fa-dollar-sign"></i> Financials
+                                        </a>
+
+                                        {% if s.is_active %}
+                                            <button class="btn btn-success btn-sm font-weight-bold shadow-sm" disabled style="opacity: 1; cursor: default;">
+                                                <i class="fas fa-check-circle mr-1"></i> Active
+                                            </button>
+                                        {% else %}
+                                            <a href="{% url 'sync-targets' s.id %}" class="btn btn-outline-warning btn-sm text-dark font-weight-bold shadow-sm" title="Switch to this plan">
+                                                <i class="fas fa-sync-alt mr-1"></i> Set as Active
+                                            </a>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="3" class="text-center text-muted py-4">
+                                        <div class="mb-2"><i class="fas fa-folder-open fa-3x text-gray-300"></i></div>
+                                        No schedules uploaded yet.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
