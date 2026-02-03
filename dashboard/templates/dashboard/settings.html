@@ -1,0 +1,123 @@
+{% extends 'dashboard/base.html' %}
+{% load humanize %}
+
+{% block title %}⚙️ Settings{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <h2 class="text-dark mb-4">
+        <i class="fas fa-cogs me-2"></i> System Configuration
+    </h2>
+
+    <div class="row">
+        
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow border-0">
+                <div class="card-header bg-primary text-white">
+                    <h6 class="m-0 font-weight-bold"><i class="fas fa-sliders-h me-2"></i> Operational Parameters</h6>
+                </div>
+                <div class="card-body">
+                    {% if settings %}
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_settings">
+                        
+                        <div class="mb-3">
+                            <label class="font-weight-bold text-primary">Plant Capacity (Monthly)</label>
+                            <div class="input-group">
+                                <input type="number" step="1" name="plant_capacity" class="form-control" value="{{ settings.plant_capacity }}">
+                                <span class="input-group-text">Tonnes</span>
+                            </div>
+                            <small class="text-muted">Reduce this to force Stockpile Overflow (e.g. 2000).</small>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="font-weight-bold">Gold Price</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" step="0.01" name="gold_price" class="form-control" value="{{ settings.gold_price }}">
+                                </div>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="font-weight-bold">Recovery Rate</label>
+                                <div class="input-group">
+                                    <input type="number" step="0.01" name="recovery_rate" class="form-control" value="{{ settings.recovery_rate }}">
+                                    <span class="input-group-text">Dec (0.90)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr>
+                        <h6 class="text-secondary font-weight-bold">Cost Assumptions</h6>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label>Mining Cost</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" step="0.01" name="mining_cost" class="form-control" value="{{ settings.base_mining_cost }}">
+                                    <span class="input-group-text">/t</span>
+                                </div>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label>Processing Cost</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" step="0.01" name="processing_cost" class="form-control" value="{{ settings.processing_cost }}">
+                                    <span class="input-group-text">/t</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-success w-100 fw-bold shadow">
+                            <i class="fas fa-save me-2"></i> Save Changes
+                        </button>
+                    </form>
+                    {% else %}
+                        <div class="alert alert-warning">No active scenario found. Please select one on the right.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow border-0">
+                <div class="card-header bg-dark text-white">
+                    <h6 class="m-0 font-weight-bold"><i class="fas fa-history me-2"></i> Scenario Manager</h6>
+                </div>
+                <div class="card-body p-0">
+                    <ul class="list-group list-group-flush">
+                        {% for s in scenarios %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center {% if s.is_active %}bg-light{% endif %}">
+                            <div>
+                                <h6 class="mb-0 font-weight-bold text-dark">{{ s.name }}</h6>
+                                <small class="text-muted">Created: {{ s.created_at|date:"M d, Y" }}</small>
+                            </div>
+                            
+                            {% if s.is_active %}
+                                <span class="badge bg-success shadow-sm px-3 py-2">Active</span>
+                            {% else %}
+                                <form method="post" style="display:inline;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="activate_scenario">
+                                    <input type="hidden" name="scenario_id" value="{{ s.id }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                                        Activate
+                                    </button>
+                                </form>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <div class="card-footer text-center">
+                    <a href="{% url 'upload_schedule' %}" class="btn btn-sm btn-outline-dark">
+                        <i class="fas fa-plus me-1"></i> Upload New Plan
+                    </a>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

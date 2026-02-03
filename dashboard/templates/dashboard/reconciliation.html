@@ -34,39 +34,38 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for row in reconciliation_data %}
+                        {% for row in table %}
                         <tr>
                             <td class="align-middle text-center">
                                 <div class="fw-bold text-white">Period {{ row.period }}</div>
-                                <span class="badge bg-secondary" style="font-size: 0.7em">{{ row.dates }}</span>
                             </td>
                             <td class="align-middle">
                                 <span class="badge 
-                                    {% if row.material == 'Waste' %}bg-danger
-                                    {% elif 'High' in row.material %}bg-success
+                                    {% if 'Waste' in row.type %}bg-danger
+                                    {% elif 'Ore' in row.type %}bg-success
                                     {% else %}bg-warning text-dark{% endif %}">
-                                    {{ row.material }}
+                                    {{ row.type }}
                                 </span>
                             </td>
                             
-                            <td class="text-end text-white">{{ row.planned|floatformat:0|intcomma }}</td>
+                            <td class="text-end text-white">{{ row.plan_mass|floatformat:0|intcomma }}</td>
                             
-                            <td class="text-end fw-bold text-warning">{{ row.actual|floatformat:0|intcomma }}</td>
+                            <td class="text-end fw-bold text-warning">{{ row.act_mass|floatformat:0|intcomma }}</td>
                             
-                            <td class="text-end {% if row.variance >= 0 %}text-success{% else %}text-danger{% endif %}">
-                                {% if row.variance > 0 %}+{% endif %}{{ row.variance|floatformat:0|intcomma }}
+                            <td class="text-end {% if row.var_mass >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                {% if row.var_mass > 0 %}+{% endif %}{{ row.var_mass|floatformat:0|intcomma }}
                             </td>
                             
                             <td class="text-end">
                                 <div class="progress" style="height: 6px; width: 80px; display: inline-flex;">
-                                    <div class="progress-bar {% if row.var_pct >= 0 %}bg-success{% else %}bg-danger{% endif %}" 
-                                         role="progressbar" style="width: {{ row.var_pct|stringformat:'f' }}%"></div>
+                                    <div class="progress-bar {% if row.perf_percent >= 100 %}bg-success{% else %}bg-danger{% endif %}" 
+                                         role="progressbar" style="width: {{ row.perf_percent|stringformat:'f' }}%"></div>
                                 </div>
-                                <small class="ms-2 text-white">{{ row.var_pct|floatformat:1 }}%</small>
+                                <small class="ms-2 text-white">{{ row.perf_percent|floatformat:1 }}%</small>
                             </td>
 
                             <td class="text-center align-middle">
-                                {% if row.variance >= 0 %}
+                                {% if row.status == 'On Track' %}
                                     <i class="fas fa-check-circle text-success fa-lg"></i>
                                 {% else %}
                                     <i class="fas fa-exclamation-circle text-danger fa-lg"></i>

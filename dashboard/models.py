@@ -343,3 +343,61 @@ class FinancialSettings(models.Model):
     def __str__(self):
         return f"Financials for {self.scenario.name}"
     
+class PitBlock(models.Model):
+    """Represents a specific small block (Pixel) on the visual map."""
+    block_id = models.CharField(max_length=50, unique=True, help_text="e.g., 'Ph1-Blk24'")
+    mine_phase = models.ForeignKey(MinePhase, on_delete=models.CASCADE, related_name='blocks', null=True, blank=True)
+    
+    # Coordinates for the Map (Optional but good for visuals)
+    x_position = models.IntegerField(default=0)
+    y_position = models.IntegerField(default=0)
+    
+    # Progress Data
+    target_tonnage = models.FloatField(default=5000) # Standard block size
+    removed_tonnage = models.FloatField(default=0)
+    grade = models.FloatField(default=0)
+    
+    status = models.CharField(
+        max_length=20, 
+        choices=[('planned', 'Planned'), ('in_progress', 'In Progress'), ('mined', 'Mined')],
+        default='planned'
+    )
+
+    def __str__(self):
+        return self.block_id
+
+
+class DailyProductionLog(models.Model):
+    """History: Keeps a record every time you click 'Add Production'."""
+    block = models.ForeignKey(PitBlock, on_delete=models.CASCADE, related_name='logs')
+    tonnage_removed = models.FloatField()
+    date = models.DateField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.tonnage_removed}t from {self.block.block_id} on {self.date}"
+
+class PeriodStockpileActual(models.Model):
+    """
+    Stores the MANUAL ACTUAL measure of stockpiles at the end of a period.
+    Used to compare against the Calculated Schedule.
+    """
+    scenario = models.ForeignKey(ScheduleScenario, on_delete=models.CASCADE)
+    period = models.IntegerField()
+    
+    # We track 3 main buckets
+    hg_tonnage = models.FloatField(default=0, help_text="High Grade Stockpile Actual")
+    hg_grade = models.FloatField(default=0)
+    
+    mg_tonnage = models.FloatField(default=0, help_text="Medium Grade Stockpile Actual")
+    mg_grade = models.FloatField(default=0)
+    
+    lg_tonnage = models.FloatField(default=0, help_text="Low Grade Stockpile Actual")
+    lg_grade = models.FloatField(default=0)
+    
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('scenario', 'period') # One record per period per scenario
+
+    def __str__(self):
+        return f"Actuals: Pd {self.period} - {self.scenario.name}"

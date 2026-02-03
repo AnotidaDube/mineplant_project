@@ -1,4 +1,4 @@
-\<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -196,6 +196,10 @@
             </a>
 
             <div class="sidebar-heading">Configuration</div>
+
+            <a class="nav-link {% if request.resolver_match.url_name == 'settings' %}active{% endif %}" href="{% url 'settings' %}">
+                <i class="fas fa-cog"></i> Settings
+            </a>
 
             <a class="nav-link {% if request.resolver_match.url_name == 'manage_plants' %}active{% endif %}" href="{% url 'manage_plants' %}">
                 <i class="fas fa-industry"></i> Manage Plants

@@ -15,7 +15,8 @@ from PIL import Image, ImageDraw
 from datetime import datetime
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse, HttpResponseNotAllowed
-from django.db.models import Sum, Count, Avg, F, FloatField, ExpressionWrapper
+from django.db.models import Sum, Count, Avg, F, FloatField, ExpressionWrapper, Case, When, FloatField
+
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.timezone import make_aware
@@ -52,7 +53,11 @@ from .models import (
     PhaseSchedule, 
     Plant,
     MonthlyProductionPlan,
-    FinancialSettings
+    FinancialSettings,
+    PitBlock, 
+    DailyProductionLog,
+    PeriodStockpileActual
+
 )
 from .serializers import (
     MinePhaseSerializer,
@@ -247,75 +252,137 @@ def ore_grade_tonnage_view(request):
     }
     return render(request, 'dashboard/ore_grade_tonnage.html', context)
 
-
-import json
-from django.shortcuts import render, redirect
-from .models import Stockpile
-from .forms import StockpileForm
-
-def stockpile_forecast(request):
+def stockpile_forecast(request, pk=None):
     """
-    View for Stockpile levels with Method A (Safety Stock) enforcement.
-    Sends ALL data to the template, allowing the user to filter via JavaScript.
+    Fixed Stockpile Forecast.
+    FIX: Now safely handles empty inputs from the 'Add Actuals' form.
     """
-    # 1. Fetch ALL Stockpiles (We do not filter here anymore)
-    stockpiles = Stockpile.objects.all().order_by('name')
+    if pk:
+        scenario = get_object_or_404(ScheduleScenario, pk=pk)
+    else:
+        scenario = ScheduleScenario.objects.filter(is_active=True).first()
+        if not scenario:
+            scenario = ScheduleScenario.objects.last()
+
+    if not scenario:
+        messages.error(request, "No schedule found.")
+        return redirect('upload_schedule')
+
+    settings, _ = FinancialSettings.objects.get_or_create(scenario=scenario)
+    PLANT_CAP = settings.plant_capacity
+
+    # --- POST: Save Manual Actuals ---
+    if request.method == "POST":
+        try:
+            # 1. HELPER: Converts empty strings "" to 0.0
+            def clean_float(val):
+                if not val or val == '': 
+                    return 0.0
+                return float(val)
+
+            period = int(request.POST.get('period'))
+            actual, _ = PeriodStockpileActual.objects.get_or_create(scenario=scenario, period=period)
+            
+            # 2. Use helper to safely get numbers
+            actual.hg_tonnage = clean_float(request.POST.get('hg_tonnage'))
+            actual.hg_grade = clean_float(request.POST.get('hg_grade'))
+            
+            actual.mg_tonnage = clean_float(request.POST.get('mg_tonnage'))
+            actual.mg_grade = clean_float(request.POST.get('mg_grade'))
+            
+            actual.lg_tonnage = clean_float(request.POST.get('lg_tonnage'))
+            actual.lg_grade = clean_float(request.POST.get('lg_grade'))
+            
+            actual.save()
+            messages.success(request, f"Saved Actuals for Period {period}")
+            return redirect('stockpile-forecast')
+            
+        except Exception as e:
+            messages.error(request, f"Error: {e}")
+
+    # --- ALGORITHM (Standard Logic) ---
+    periods = MaterialSchedule.objects.filter(scenario=scenario).values_list('period', flat=True).distinct().order_by('period')
     
-    # METHOD A CONFIGURATION:
-    # 5 Days x 780t/day = 3,900t
-    SAFETY_STOCK_TARGET = 3900 
+    detailed_data = [] 
+    
+    bal_hg = 0
+    bal_mg = 0
+    bal_lg = 0
 
-    stockpile_data = []
+    latest_actual_hg = 0
+    latest_actual_mg = 0
+    latest_actual_lg = 0
 
-    for s in stockpiles:
-        # 1. Enforce Method A Logic
-        # If the DB has 0 as the target, use the calculated Safety Stock
-        target = s.projected_tonnage if s.projected_tonnage > 0 else SAFETY_STOCK_TARGET
+    for p in periods:
+        ore_rows = MaterialSchedule.objects.filter(scenario=scenario, period=p).exclude(material_type__icontains='waste')
+        sorted_ore = sorted(ore_rows, key=lambda x: x.grade, reverse=True)
         
-        # Calculate Variance against this Target
-        variance = s.current_tonnage - target
-        variance_pct = (variance / target * 100) if target > 0 else 0
+        plant_rem = PLANT_CAP
+        add_hg, add_mg, add_lg = 0, 0, 0
 
-        # 2. Professional Color Coding (Passed to JS)
-        # We assign colors here so they stay consistent regardless of sorting
-        if 'High' in s.name:
-            color = 'rgba(25, 135, 84, 0.7)'     # Green
-            border = 'rgba(25, 135, 84, 1)'
-        elif 'Medium' in s.name:
-            color = 'rgba(255, 193, 7, 0.7)'     # Yellow/Orange
-            border = 'rgba(255, 193, 7, 1)'
-        elif 'Low' in s.name:
-            color = 'rgba(220, 53, 69, 0.7)'     # Red
-            border = 'rgba(220, 53, 69, 1)'
-        elif 'Waste' in s.name:
-            color = 'rgba(108, 117, 125, 0.7)'   # Grey
-            border = 'rgba(108, 117, 125, 1)'
-        else:
-            color = 'rgba(13, 110, 253, 0.7)'    # Blue (ROM/Mixed)
-            border = 'rgba(13, 110, 253, 1)'
+        for row in sorted_ore:
+            mass = row.mass
+            grade = row.grade
+            if plant_rem > 0:
+                if mass <= plant_rem:
+                    plant_rem -= mass
+                    mass = 0
+                else:
+                    mass -= plant_rem
+                    plant_rem = 0
+            
+            if mass > 0:
+                if grade >= 3.5: add_hg += mass
+                elif grade >= 1.5: add_mg += mass
+                else: add_lg += mass
+        
+        bal_hg += add_hg
+        bal_mg += add_mg
+        bal_lg += add_lg
+        
+        actual = PeriodStockpileActual.objects.filter(scenario=scenario, period=p).first()
+        
+        if actual:
+            if actual.hg_tonnage > 0: latest_actual_hg = actual.hg_tonnage
+            if actual.mg_tonnage > 0: latest_actual_mg = actual.mg_tonnage
+            if actual.lg_tonnage > 0: latest_actual_lg = actual.lg_tonnage
 
-        stockpile_data.append({
-            'name': s.name,
-            'current_tonnage': s.current_tonnage,
-            'projected_tonnage': target,
-            'grade': s.grade,
-            'variance': round(variance, 0),
-            'variance_percent': round(variance_pct, 1),
-            'color': color,
-            'border': border
-        })
+        detailed_data.append({'name': f"Period {p} - High Grade", 'projected': bal_hg, 'actual': actual.hg_tonnage if actual else 0, 'grade': actual.hg_grade if actual else 0, 'variance': (actual.hg_tonnage - bal_hg) if actual else 0, 'color': '#198754'})
+        detailed_data.append({'name': f"Period {p} - Med Grade", 'projected': bal_mg, 'actual': actual.mg_tonnage if actual else 0, 'grade': actual.mg_grade if actual else 0, 'variance': (actual.mg_tonnage - bal_mg) if actual else 0, 'color': '#ffc107'})
+        detailed_data.append({'name': f"Period {p} - Low Grade", 'projected': bal_lg, 'actual': actual.lg_tonnage if actual else 0, 'grade': actual.lg_grade if actual else 0, 'variance': (actual.lg_tonnage - bal_lg) if actual else 0, 'color': '#dc3545'})
 
-    # We pass the raw list of dicts to the template
-    # The template will convert this to a JS Object for filtering
-    context = {
-        "stockpile_data": stockpile_data,
-    }
-    return render(request, 'dashboard/stockpile_forecast.html', context)
+    chart_data = [
+        {
+            'name': 'High Grade Stockpile',
+            'projected': bal_hg,
+            'actual': latest_actual_hg, 
+            'color': 'rgba(25, 135, 84, 0.7)',
+            'border': '#198754'
+        },
+        {
+            'name': 'Medium Grade Stockpile',
+            'projected': bal_mg,
+            'actual': latest_actual_mg,
+            'color': 'rgba(255, 193, 7, 0.7)',
+            'border': '#ffc107'
+        },
+        {
+            'name': 'Low Grade Stockpile',
+            'projected': bal_lg,
+            'actual': latest_actual_lg,
+            'color': 'rgba(220, 53, 69, 0.7)',
+            'border': '#dc3545'
+        }
+    ]
 
+    return render(request, 'dashboard/stockpile_forecast.html', {
+        'chart_data': chart_data,       
+        'detailed_data': detailed_data, 
+        'periods': periods,
+        'scenario': scenario
+    })
 
-# ==========================================
 # Pit & Phase Visualization Views
-# ==========================================
 def upload_block_model(request):
     """
     NEW VIEW: Handles uploading of Surpac Pit Design (.str) and Block Models (.csv).
@@ -705,80 +772,102 @@ def processing_loss_dashboard(request):
 
 def processing_loss_data(request):
     """
-    API that forces manual calculation to match the Shell Script logic.
+    API for Processing Loss (Dilution Analysis).
+    - Compares Actual Grade vs. Expected Phase Grade.
+    - USES SETTINGS for Gold Price (No more hardcoded $65).
+    - HANDLES NONE values safely to prevent crashes.
     """
-    period = request.GET.get('period', 'daily')
-    start = request.GET.get('start')
-    end = request.GET.get('end')
+    try:
+        period = request.GET.get('period', 'daily')
+        start = request.GET.get('start')
+        end = request.GET.get('end')
 
-    # 1. Get Ore Records
-    qs = ProductionRecord.objects.filter(material_type='ore')
+        # 1. Get Settings (For Gold Price)
+        scenario = ScheduleScenario.objects.filter(is_active=True).first() or ScheduleScenario.objects.last()
+        price_per_gram = 65.0 # Default fallback
+        if scenario:
+            settings, _ = FinancialSettings.objects.get_or_create(scenario=scenario)
+            price_per_gram = settings.gold_price
 
-    # 2. Date Filtering
-    if start:
-        qs = qs.filter(timestamp__date__gte=date.fromisoformat(start))
-    if end:
-        qs = qs.filter(timestamp__date__lte=date.fromisoformat(end))
+        # 2. Get Ore Records
+        qs = ProductionRecord.objects.filter(material_type='ore').select_related('mine_phase')
 
-    buckets = {}
+        # 3. Date Filtering
+        if start:
+            qs = qs.filter(timestamp__date__gte=date.fromisoformat(start))
+        if end:
+            qs = qs.filter(timestamp__date__lte=date.fromisoformat(end))
 
-    for r in qs:
-        # --- THE MANUAL MATH (Exactly like your Shell) ---
-        target = r.mine_phase.expected_grade
-        actual = r.grade
-        tonnage = r.tonnage
-        
-        # Calculate Difference
-        grade_diff = target - actual
-        
-        # Only count it as a LOSS if Actual < Target
-        if grade_diff > 0:
-            loss_kg = (grade_diff * tonnage) / 1000  # Convert grams to kg
-            # Estimate Revenue: (Loss kg * 1000g) * $65/g (approx gold price)
-            loss_usd = (loss_kg * 1000) * 65 
-        else:
-            loss_kg = 0
-            loss_usd = 0
+        buckets = {}
 
-        # --- Aggregation Logic ---
-        # Group by Period (Daily/Weekly/Monthly)
-        if period == 'weekly':
-            key = r.timestamp.date().isocalendar()[0:2] # (Year, Week)
-        elif period == 'monthly':
-            key = (r.timestamp.year, r.timestamp.month)
-        else:
-            key = r.timestamp.date()
-
-        if key not in buckets:
-            buckets[key] = {'gold_lost_kg': 0.0, 'revenue_lost_usd': 0.0}
-
-        buckets[key]['gold_lost_kg'] += loss_kg
-        buckets[key]['revenue_lost_usd'] += loss_usd
-
-    # 3. Sort and Format for Chart
-    sorted_items = sorted(buckets.items())
-    labels = []
-    gold = []
-    revenue = []
-
-    for key, vals in sorted_items:
-        # Format Labels
-        if period == 'weekly':
-            labels.append(f'{key[0]}-W{key[1]}')
-        elif period == 'monthly':
-            labels.append(f'{key[0]}-{key[1]:02d}')
-        else:
-            labels.append(key.isoformat())
+        for r in qs:
+            # --- SAFETY CHECK (The Fix) ---
+            # Treat None (Blank) as 0.0 to prevent crashes
+            target = r.mine_phase.expected_grade if (r.mine_phase and r.mine_phase.expected_grade) else 0.0
+            actual = r.grade if r.grade is not None else 0.0
+            tonnage = r.tonnage if r.tonnage is not None else 0.0
             
-        gold.append(round(vals['gold_lost_kg'], 4))
-        revenue.append(round(vals['revenue_lost_usd'], 2))
+            # Calculate Difference
+            grade_diff = target - actual
+            
+            # Only count it as a LOSS if Actual < Target (Underbreak/Dilution)
+            if grade_diff > 0 and tonnage > 0:
+                loss_grams = grade_diff * tonnage 
+                loss_kg = loss_grams / 1000.0
+                
+                # Revenue Loss = Grams Lost * Current Gold Price
+                loss_usd = loss_grams * price_per_gram
+            else:
+                loss_kg = 0
+                loss_usd = 0
 
-    return JsonResponse({
-        'labels': labels,
-        'gold': gold,
-        'revenue': revenue
-    })
+            # --- Aggregation Logic ---
+            if period == 'weekly':
+                # Returns (Year, WeekNum, Day) -> slice to (Year, Week)
+                iso = r.timestamp.date().isocalendar()
+                key = (iso[0], iso[1]) 
+            elif period == 'monthly':
+                key = (r.timestamp.year, r.timestamp.month)
+            else:
+                key = r.timestamp.date()
 
+            if key not in buckets:
+                buckets[key] = {'gold_lost_kg': 0.0, 'revenue_lost_usd': 0.0}
+
+            buckets[key]['gold_lost_kg'] += loss_kg
+            buckets[key]['revenue_lost_usd'] += loss_usd
+
+        # 4. Sort and Format for Chart
+        sorted_items = sorted(buckets.items())
+        labels = []
+        gold = []
+        revenue = []
+
+        for key, vals in sorted_items:
+            # Format Labels
+            if period == 'weekly':
+                labels.append(f'{key[0]}-W{key[1]}')
+            elif period == 'monthly':
+                import calendar
+                month_name = calendar.month_abbr[key[1]]
+                labels.append(f'{month_name}-{key[0]}')
+            else:
+                labels.append(key.isoformat())
+                
+            gold.append(round(vals['gold_lost_kg'], 4))
+            revenue.append(round(vals['revenue_lost_usd'], 2))
+
+        return JsonResponse({
+            'labels': labels,
+            'gold': gold,
+            'revenue': revenue
+        })
+
+    except Exception as e:
+        print(f"Error in Processing Loss API: {e}")
+        # Return empty structure so frontend doesn't show "Failed to load" alert
+        return JsonResponse({'labels': [], 'gold': [], 'revenue': []})
+    
 def production_summary(request):
     records = ProductionRecord.objects.order_by('-timestamp')[:20]
     return render(request, 'dashboard/production_summary.html', {'records': records})
@@ -800,78 +889,63 @@ def add_stockpile(request):
 
 def add_production(request):
     """
-    Handles adding production records via Text Box inputs.
-    Triggers:
-    1. Pit Progress Update (PhaseSchedule)
-    2. Stockpile Update (Mass Balance + Weighted Grade)
+    Handles Manual Production Entry.
+    FIX: Now correctly Renders the form on GET requests instead of redirecting.
     """
-    if request.method == 'POST':
-        form = ProductionRecordForm(request.POST)
-        if form.is_valid():
-            production = form.save(commit=False)
+    # 1. HANDLE FORM SUBMISSION (POST)
+    if request.method == "POST":
+        try:
+            # Check if this is a Block Update (from the Map)
+            block_id = request.POST.get('block_id')
             
-            # --- SMART LOGIC 1: Auto-fill Expected Grade ---
-            # If the user didn't type a grade, try to fetch it from the Pit Plan
-            if production.mine_phase and production.mine_phase.expected_grade and not production.grade:
-                production.grade = production.mine_phase.expected_grade
-            
-            production.save()
-            
-            # --- SMART LOGIC 2: Update Pit Progress ---
-            # Find the schedule for this phase and add the tonnage so the Map updates
-            schedule = PhaseSchedule.objects.filter(mine_phase=production.mine_phase).first()
-            if schedule:
-                schedule.removed_tonnage += production.tonnage
-                schedule.update_status() # Auto-switch to 'Active'
-                schedule.save()
-
-            # --- SMART LOGIC 3: Update Stockpile ---
-            if production.material_type == 'ore':
-                # A. Determine Stockpile Name based on Grade
-                # You can adjust these grade cut-offs as needed
-                if production.grade >= 3.5:
-                    sp_name = "High Grade Stockpile"
-                elif production.grade >= 1.5:
-                    sp_name = "Medium Grade Stockpile"
+            if block_id:
+                # Logic for Visual Map Blocks
+                tonnage = float(request.POST.get('tonnage', 0))
+                block = get_object_or_404(PitBlock, id=block_id)
+                
+                # Safety Fix: Handle None values
+                current_removed = block.removed_tonnage or 0.0
+                target = block.target_tonnage or 0.0 
+                
+                block.removed_tonnage = current_removed + tonnage
+                
+                if target > 0 and block.removed_tonnage >= target:
+                    block.status = 'mined'
                 else:
-                    sp_name = "Low Grade Stockpile"
+                    block.status = 'in_progress'
+                block.save()
                 
-                sp, created = Stockpile.objects.get_or_create(name=sp_name)
-                
-                # B. Calculate New Weighted Average Grade
-                # Formula: ((Old_Tons * Old_Grade) + (New_Tons * New_Grade)) / Total_Tons
-                current_mass = sp.current_tonnage
-                current_grade = sp.grade if sp.grade else 0.0
-                new_mass = production.tonnage
-                new_grade = production.grade if production.grade else 0.0
-                
-                total_mass = current_mass + new_mass
-                
-                if total_mass > 0:
-                    weighted_grade = ((current_mass * current_grade) + (new_mass * new_grade)) / total_mass
-                    sp.grade = round(weighted_grade, 2)
-                
-                # C. Update Tonnage
-                sp.current_tonnage = total_mass
-                sp.save()
-                
-                msg_location = sp_name
-            else:
-                msg_location = "Waste Dump"
+                # Save History
+                DailyProductionLog.objects.create(
+                    block=block,
+                    tonnage_removed=tonnage,
+                    date=datetime.now().date()
+                )
+                messages.success(request, f"Updated Block {block.block_id}: +{tonnage}t")
+                return redirect('pit_phase_dashboard')
 
-            messages.success(request, f"Production Saved! {production.tonnage}t moved to {msg_location}. Pit '{production.mine_phase}' updated.")
-            return redirect('production-vs-demand')
+            else:
+                # Logic for Standard Production Form
+                form = ProductionRecordForm(request.POST)
+                if form.is_valid():
+                    form.save()
+                    messages.success(request, "Production record saved.")
+                    return redirect('pit_phase_dashboard')
+
+        except Exception as e:
+            messages.error(request, f"Error: {str(e)}")
+            return redirect('pit_phase_dashboard')
+
+    # 2. HANDLE PAGE LOAD (GET) - THIS WAS MISSING!
     else:
-        form = ProductionRecordForm(initial={'timestamp': timezone.now()})
-    
-    # --- CONTEXT FOR AUTO-COMPLETE ---
-    # We pass all phases and plants so the text box can suggest them
+        form = ProductionRecordForm()
+        
+    # We pass the form and lists for dropdowns
     context = {
         'form': form,
-        'phases': MinePhase.objects.all().order_by('name'),
-        'plants': Plant.objects.all().order_by('name')
+        'phases': MinePhase.objects.all(),
+        'plants': Plant.objects.all()
     }
-    
     return render(request, 'dashboard/add_production.html', context)
 
 # --- 2. ADD DEMAND (STOCKPILE DEPLETION) ---
@@ -1047,38 +1121,64 @@ def export_pdf(request):
 def welcome_dashboard(request):
     return render(request, 'dashboard/home_dashboard.html')
 
-
-# dashboard/views.py
-from django.db.models import Sum, Case, When, FloatField
-
 def mass_analysis_view(request):
     """
-    Dedicated view to analyze total mass columns:
-    Waste, Low Grade, Medium Grade, and High Grade.
+    Mass Analysis of the ACTIVE SCHEDULE.
+    FIX: Dynamically categorizes 'Ore' into Low/Med/High based on grade
+    so it doesn't show 0 if the CSV just says "ore".
     """
-    # We use Django's 'aggregate' to sum specific conditions efficiently
-    analysis = ProductionRecord.objects.aggregate(
+    # 1. Get the Active Scenario
+    scenario = ScheduleScenario.objects.filter(is_active=True).first()
+    if not scenario:
+        scenario = ScheduleScenario.objects.last()
+
+    if not scenario:
+        messages.warning(request, "No schedule found.")
+        return redirect('upload_schedule')
+
+    # 2. Aggregate from the SCHEDULE
+    # We look for "waste" explicitly.
+    # For ore, we look at the GRADE value to decide the bucket.
+    analysis = MaterialSchedule.objects.filter(scenario=scenario).aggregate(
+        # Waste: explicit label
         waste=Sum(
-            Case(When(material_type='waste', then='tonnage'), default=0, output_field=FloatField())
+            Case(When(material_type__iexact='waste', then='mass'), default=0, output_field=FloatField())
         ),
+        # Low Grade: Type is Ore AND Grade < 1.5
         low_grade=Sum(
-            Case(When(material_type='ore', grade__lt=1.5, then='tonnage'), default=0, output_field=FloatField())
+            Case(When(material_type__iexact='ore', grade__lt=1.5, then='mass'), default=0, output_field=FloatField())
         ),
+        # Medium Grade: Type is Ore AND 1.5 <= Grade < 3.5
         medium_grade=Sum(
-            Case(When(material_type='ore', grade__gte=1.5, grade__lt=2.5, then='tonnage'), default=0, output_field=FloatField())
+            Case(When(material_type__iexact='ore', grade__gte=1.5, grade__lt=3.5, then='mass'), default=0, output_field=FloatField())
         ),
+        # High Grade: Type is Ore AND Grade >= 3.5
         high_grade=Sum(
-            Case(When(material_type='ore', grade__gte=2.5, then='tonnage'), default=0, output_field=FloatField())
+            Case(When(material_type__iexact='ore', grade__gte=3.5, then='mass'), default=0, output_field=FloatField())
         )
     )
 
-    # Clean up None values (in case database is empty)
+    # 3. Calculate Totals
+    waste_t = analysis['waste'] or 0
+    lg_t = analysis['low_grade'] or 0
+    mg_t = analysis['medium_grade'] or 0
+    hg_t = analysis['high_grade'] or 0
+    
+    total_ore = lg_t + mg_t + hg_t
+    total_moved = waste_t + total_ore
+
+    # Avoid division by zero
+    strip_ratio = round(waste_t / total_ore, 2) if total_ore > 0 else 0
+
     context = {
-        'waste': analysis['waste'] or 0,
-        'low_grade': analysis['low_grade'] or 0,
-        'medium_grade': analysis['medium_grade'] or 0,
-        'high_grade': analysis['high_grade'] or 0,
-        'total_moved': (analysis['waste'] or 0) + (analysis['low_grade'] or 0) + (analysis['medium_grade'] or 0) + (analysis['high_grade'] or 0)
+        'scenario': scenario,
+        'waste': waste_t,
+        'low_grade': lg_t,
+        'medium_grade': mg_t,
+        'high_grade': hg_t,
+        'total_ore': total_ore,
+        'total_moved': total_moved,
+        'strip_ratio': strip_ratio
     }
 
     return render(request, 'dashboard/mass_analysis.html', context)
@@ -1310,68 +1410,93 @@ def schedule_dashboard_view(request):
 
 def reconciliation_view(request):
     """
-    Professional Reconciliation: Compares Planned (CSV) vs Actual (ProductionRecords).
+    Reconciliation: Plan vs Actual.
+    FINAL VERSION: 
+    1. Dynamically loads the NEWEST Active Scenario (matching Production Schedule).
+    2. Manually loops data to GUARANTEE rows appear (no empty tables).
     """
-    scenario = ScheduleScenario.objects.last()
+    # 1. GET ACTIVE SCENARIO (Prioritize the most recently activated one)
+    # This logic matches your Production Schedule view exactly.
+    scenario = ScheduleScenario.objects.filter(is_active=True).order_by('-id').first()
+    
+    # Fallback: If no active flag, get the most recently uploaded one
     if not scenario:
-        return render(request, 'dashboard/reconciliation.html', {'error': 'No Schedule Found'})
+        scenario = ScheduleScenario.objects.order_by('-id').first()
 
-    # 1. Get the Plan
-    planned_items = MaterialSchedule.objects.filter(scenario=scenario).order_by('period')
-    periods = planned_items.values_list('period', flat=True).distinct().order_by('period')
+    if not scenario:
+        messages.warning(request, "No schedule found.")
+        return redirect('upload_schedule')
 
-    reconciliation_data = []
+    # 2. LOAD PLAN (Manual Loop to guarantee data visibility)
+    report = {}
+    plan_rows = MaterialSchedule.objects.filter(scenario=scenario)
+    
+    for row in plan_rows:
+        p = row.period
+        if p not in report: 
+            report[p] = {'plan_ore': 0, 'plan_waste': 0, 'act_ore': 0, 'act_waste': 0}
 
-    for period in periods:
-        # Get date range for this period from the plan
-        p_items = planned_items.filter(period=period)
-        start_date = p_items.first().start_date
-        end_date = p_items.first().end_date
+        name = row.material_type.lower()
+        mass = row.mass if row.mass else 0.0
 
-        # 2. Get the Actuals (ProductionRecords) for this specific timeframe
-        actuals_qs = ProductionRecord.objects.filter(
-            timestamp__date__gte=start_date, 
-            timestamp__date__lte=end_date
-        )
+        if 'waste' in name:
+            report[p]['plan_waste'] += mass
+        else:
+            report[p]['plan_ore'] += mass
 
-        # 3. Sum Actuals by Category
-        actual_sums = defaultdict(float)
-        for record in actuals_qs:
-            # Re-use the logic from your Mass Analysis to categorize
-            cat = 'waste'
-            if record.material_type == 'ore':
-                if record.grade < 1.5: cat = 'low_grade'
-                elif record.grade < 2.5: cat = 'medium_grade' # Matches your mass analysis logic
-                else: cat = 'high_grade'
+    # 3. LOAD ACTUALS
+    act_rows = ProductionRecord.objects.all()
+    
+    for row in act_rows:
+        p = row.timestamp.month
+        if p not in report: 
+            report[p] = {'plan_ore': 0, 'plan_waste': 0, 'act_ore': 0, 'act_waste': 0}
+
+        name = row.material_type.lower()
+        tonnage = row.tonnage if row.tonnage else 0.0
+
+        if 'waste' in name:
+            report[p]['act_waste'] += tonnage
+        else:
+            report[p]['act_ore'] += tonnage
+
+    # 4. BUILD TABLE (Variable names match your Template)
+    reconciliation_table = []
+    
+    for p in sorted(report.keys()):
+        data = report[p]
+        
+        # ORE ROW (Show if ANY data exists)
+        if data['plan_ore'] > 0 or data['act_ore'] > 0:
+            var = data['act_ore'] - data['plan_ore']
+            reconciliation_table.append({
+                'period': p,
+                'type': 'Total Ore',
+                'plan_mass': data['plan_ore'],
+                'act_mass': data['act_ore'],
+                'var_mass': var,
+                'perf_percent': round((data['act_ore'] / data['plan_ore'] * 100), 1) if data['plan_ore'] > 0 else 0,
+                'status': 'Underperforming' if var < 0 else 'On Track'
+            })
             
-            actual_sums[cat] += record.tonnage
-
-        # 4. Compare Plan vs Actual
-        for item in p_items:
-            planned_mass = item.mass
-            actual_mass = actual_sums.get(item.material_type, 0)
-            variance = actual_mass - planned_mass
-            
-            pct = (variance / planned_mass * 100) if planned_mass > 0 else 0
-
-            reconciliation_data.append({
-                'period': item.period,
-                'dates': f"{start_date.strftime('%d %b')} - {end_date.strftime('%d %b')}",
-                'material': item.get_material_type_display(),
-                'planned': planned_mass,
-                'actual': actual_mass,
-                'variance': variance,
-                'var_pct': pct,
+        # WASTE ROW
+        if data['plan_waste'] > 0 or data['act_waste'] > 0:
+            var = data['act_waste'] - data['plan_waste']
+            reconciliation_table.append({
+                'period': p,
+                'type': 'Waste',
+                'plan_mass': data['plan_waste'],
+                'act_mass': data['act_waste'],
+                'var_mass': var,
+                'perf_percent': round((data['act_waste'] / data['plan_waste'] * 100), 1) if data['plan_waste'] > 0 else 0,
+                'status': 'Behind Schedule' if var < 0 else 'On Track'
             })
 
-    context = {
-        'scenario': scenario,
-        'reconciliation_data': reconciliation_data
-    }
-    return render(request, 'dashboard/reconciliation.html', context)
-
-
-
+    # 5. SEND CONTEXT (Keys match the template logic)
+    return render(request, 'dashboard/reconciliation.html', {
+        'table': reconciliation_table,   # Matches {% for row in table %}
+        'scenario': scenario
+    })
     """
 from django.http import HttpResponse
 
@@ -1623,87 +1748,164 @@ def pit_config_view(request):
     return render(request, 'dashboard/pit_config.html', {'pits': pits})
 
 def cash_flow_view(request, pk):
+    """
+    Cash Flow Analysis (Grams Only).
+    Calculates Revenue based on $/g and adds Stockpile Potential Value.
+    """
     scenario = get_object_or_404(ScheduleScenario, pk=pk)
-    
-    # 1. Settings
-    settings, created = FinancialSettings.objects.get_or_create(scenario=scenario)
-    
+    settings, _ = FinancialSettings.objects.get_or_create(scenario=scenario)
+
+    # 1. Handle Updates (Recalculate Button)
     if request.method == "POST":
-        settings.gold_price = float(request.POST.get('gold_price', 1800))
-        settings.plant_capacity = float(request.POST.get('plant_capacity', 23400))
-        settings.base_mining_cost = float(request.POST.get('base_mining_cost', 4.5))
-        settings.save()
-        messages.success(request, "Financial parameters updated!")
+        try:
+            settings.gold_price = float(request.POST.get('gold_price', 0))
+            settings.plant_capacity = float(request.POST.get('plant_capacity', 0))
+            settings.base_mining_cost = float(request.POST.get('mining_cost', 0))
+            settings.processing_cost = float(request.POST.get('processing_cost', 0))
+            settings.save()
+            messages.success(request, "Financial parameters updated.")
+        except ValueError:
+            messages.error(request, "Invalid input.")
         return redirect('cash_flow', pk=pk)
 
-    # 2. Data Processing
-    periods = MaterialSchedule.objects.filter(scenario=scenario).values('period').distinct().order_by('period')
+    # 2. Get Schedule Data by Period
+    # We group by period to show the table rows
+    periods = MaterialSchedule.objects.filter(scenario=scenario).values_list('period', flat=True).distinct().order_by('period')
     
-    report_data = []
-    cumulative_cash = 0
+    table_data = []
     
+    cumulative_cashflow = 0
+
     for p in periods:
-        pid = p['period']
-        period_rows = MaterialSchedule.objects.filter(scenario=scenario, period=pid)
+        # Get totals for this period
+        data = MaterialSchedule.objects.filter(scenario=scenario, period=p).aggregate(
+            total_waste=Sum(Case(When(material_type='waste', then='mass'), default=0, output_field=FloatField())),
+            total_ore=Sum(Case(When(material_type__in=['low_grade', 'medium_grade', 'high_grade'], then='mass'), default=0, output_field=FloatField())),
+            weighted_grade=Sum(F('mass') * F('grade'), output_field=FloatField())
+        )
         
-        total_mass = period_rows.aggregate(s=Sum('mass'))['s'] or 0
+        waste = data['total_waste'] or 0
+        ore = data['total_ore'] or 0
+        total_mined = waste + ore
         
-        # --- THE FIX IS HERE ---
-        # Instead of looking for "ore", we EXCLUDE "waste".
-        # This captures 'low_grade', 'medium_grade', 'high_grade' automatically.
-        ore_rows = period_rows.exclude(material_type__icontains='waste')
+        # Calculate Average Grade
+        avg_grade = (data['weighted_grade'] / ore) if ore > 0 else 0
         
-        ore_mass = ore_rows.aggregate(s=Sum('mass'))['s'] or 0
-        waste_mass = total_mass - ore_mass
+        # --- YOUR LOGIC APPLIED HERE ---
         
-        # Calculate Grade (Weighted Average)
-        grade_product = 0
-        for row in ore_rows:
-            grade_product += (row.mass * row.grade)
-        avg_grade = (grade_product / ore_mass) if ore_mass > 0 else 0
+        # 1. Processing vs Stockpile Split
+        capacity = settings.plant_capacity
+        processed_tonnes = min(ore, capacity)
+        stockpiled_tonnes = max(0, ore - capacity)
         
-        # --- SPLIT LOGIC ---
-        plant_cap = settings.plant_capacity
-        if ore_mass > plant_cap:
-            processed_tonnes = plant_cap
-            stockpiled_tonnes = ore_mass - plant_cap
-        else:
-            processed_tonnes = ore_mass
-            stockpiled_tonnes = 0
-            
-        # --- FINANCIALS ---
-        recovered_grade = avg_grade * settings.recovery_rate
-        value_per_tonne = recovered_grade * (settings.gold_price / 31.1)
+        # 2. Gold Produced (Grams)
+        # Formula: Tonnes * Grade * Recovery
+        gold_produced_g = processed_tonnes * avg_grade * settings.recovery_rate
         
-        revenue = processed_tonnes * value_per_tonne
-        stockpile_value = stockpiled_tonnes * value_per_tonne
+        # 3. Revenue ($)
+        # Formula: Grams * Price/g
+        revenue = gold_produced_g * settings.gold_price
         
-        mining_cost = total_mass * settings.base_mining_cost 
+        # 4. Costs ($)
+        # Mining Cost: Applied to TOTAL movement (Ore + Waste) because you pay to move waste too!
+        mining_cost = total_mined * settings.base_mining_cost
+        
+        # Processing Cost: Applied only to PROCESSED tonnes
         processing_cost = processed_tonnes * settings.processing_cost
         
         total_cost = mining_cost + processing_cost
-        net_cash = revenue - total_cost
-        cumulative_cash += net_cash
         
-        # --- REPORT DATA ---
-        report_data.append({
-            'period': pid,
-            'ore_mined': int(ore_mass),
-            'waste_mined': int(waste_mass),
-            'processed': int(processed_tonnes),
-            'stockpiled': int(stockpiled_tonnes),
-            'grade': round(avg_grade, 2),
-            'revenue': int(revenue),
-            'stockpile_val': int(stockpile_value),
-            'mining_cost': int(mining_cost),
-            'processing_cost': int(processing_cost),
-            'total_cost': int(total_cost),
-            'net_cash': int(net_cash),
-            'cumulative': int(cumulative_cash)
+        # 5. Net Cash Flow
+        net_cash_flow = revenue - total_cost
+        cumulative_cashflow += net_cash_flow
+        
+        # 6. STOCKPILE VALUE (The New Column)
+        # Value = Stockpiled Tonnes * Grade * Recovery * Price
+        # This is "Potential Revenue" sitting on the pad
+        stockpile_gold_g = stockpiled_tonnes * avg_grade * settings.recovery_rate
+        stockpile_value = stockpile_gold_g * settings.gold_price
+
+        table_data.append({
+            'period': p,
+            'ore': ore,
+            'waste': waste,
+            'total_mined': total_mined,
+            'processed': processed_tonnes,
+            'stockpiled': stockpiled_tonnes,
+            'grade': avg_grade,
+            'revenue': revenue,
+            'mining_cost': mining_cost,
+            'processing_cost': processing_cost,
+            'total_cost': total_cost,
+            'net_cash_flow': net_cash_flow,
+            'stockpile_value': stockpile_value # <--- New Data Point
         })
 
     return render(request, 'dashboard/cash_flow.html', {
         'scenario': scenario,
         'settings': settings,
-        'report_data': report_data
+        'table_data': table_data,
+        'cumulative_cashflow': cumulative_cashflow
+    })
+
+def settings_view(request):
+    """
+    Central Control Room.
+    1. Update Financial Parameters (Capacity, Gold Price, Costs).
+    2. Switch Active Schedule Scenarios.
+    """
+    # 1. Identify the Active Scenario
+    active_scenario = ScheduleScenario.objects.filter(is_active=True).first()
+    
+    # Fallback: If none is active, grab the most recent one
+    if not active_scenario:
+        active_scenario = ScheduleScenario.objects.last()
+        if active_scenario:
+            active_scenario.is_active = True
+            active_scenario.save()
+
+    # 2. Get (or Create) the Settings for this Scenario
+    settings_obj = None
+    if active_scenario:
+        settings_obj, _ = FinancialSettings.objects.get_or_create(scenario=active_scenario)
+
+    # 3. Handle Updates (POST)
+    if request.method == "POST":
+        action = request.POST.get('action')
+
+        # A. Update Financial Numbers
+        if action == "update_settings" and settings_obj:
+            try:
+                settings_obj.plant_capacity = float(request.POST.get('plant_capacity'))
+                settings_obj.gold_price = float(request.POST.get('gold_price'))
+                settings_obj.recovery_rate = float(request.POST.get('recovery_rate'))
+                settings_obj.base_mining_cost = float(request.POST.get('mining_cost'))
+                settings_obj.processing_cost = float(request.POST.get('processing_cost'))
+                settings_obj.save()
+                messages.success(request, "Parameters Updated Successfully!")
+            except ValueError:
+                messages.error(request, "Invalid input. Please ensure all fields are numbers.")
+
+        # B. Switch Active Scenario
+        elif action == "activate_scenario":
+            new_id = request.POST.get('scenario_id')
+            if new_id:
+                # Deactivate all others
+                ScheduleScenario.objects.update(is_active=False)
+                # Activate the chosen one
+                new_active = ScheduleScenario.objects.get(id=new_id)
+                new_active.is_active = True
+                new_active.save()
+                messages.success(request, f"Switched to Scenario: {new_active.name}")
+                return redirect('settings') 
+
+        return redirect('settings')
+
+    # 4. Render Page
+    all_scenarios = ScheduleScenario.objects.all().order_by('-created_at')
+    
+    return render(request, 'dashboard/settings.html', {
+        'settings': settings_obj,
+        'active_scenario': active_scenario,
+        'scenarios': all_scenarios
     })

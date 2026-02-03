@@ -7,6 +7,7 @@ urlpatterns = [
     # ==========================
     path('', views.welcome_dashboard, name='home_dashboard'),
     path('dashboard/', views.mine_plant_dashboard, name='mine_plant_dashboard'),
+    path('settings/', views.settings_view, name='settings'),
     
     # This is your MAIN Pit Dashboard (The one we fixed)
     path('dashboard/phase_progress/', views.phase_progress_view, name='pit_phase_dashboard'),

@@ -5,56 +5,32 @@
 {% block title %}📦 Stockpile Forecast{% endblock %}
 
 {% block content %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <div class="container-fluid mt-4">
 
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="text-light bg-dark p-3 rounded shadow">
-            <i class="fas fa-cubes me-2"></i>Stockpile Forecast
-        </h2>
-        <div class="d-flex gap-2">
-            <button onclick="exportStockpileCSV()" class="btn btn-outline-success bg-dark text-success border-success">
-                <i class="fas fa-file-csv"></i> Export CSV
-            </button>
-            <button onclick="exportStockpilePDF()" class="btn btn-outline-danger bg-dark text-danger border-danger">
-                <i class="fas fa-file-pdf"></i> Export PDF
-            </button>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="text-light bg-dark p-3 rounded shadow d-inline-block">
+                <i class="fas fa-cubes me-2"></i>Stockpile Forecast
+            </h2>
+            <div class="text-muted mt-1 ml-1">Scenario: {{ scenario.name }}</div>
         </div>
-    </div>
-
-    <p class="text-secondary mb-4">
-        <strong>Strategy:</strong> Maintaining a 5-day safety stock (3,900t) buffer for all ore grades.
-        <br>
-        <span class="badge bg-success">High Grade</span> 
-        <span class="badge bg-warning text-dark">Medium Grade</span> 
-        <span class="badge bg-danger">Low Grade</span>
-        <span class="badge bg-primary">ROM (Mixed)</span>
-    </p>
-
-    <div class="row mb-3">
-        <div class="col-md-4">
-            <div class="input-group shadow-sm">
-                <label class="input-group-text bg-dark text-white border-secondary" for="stockpileFilter">
-                    <i class="fas fa-filter me-2"></i> View
-                </label>
-                <select id="stockpileFilter" class="form-select bg-secondary text-white border-secondary" onchange="updateChartFilter()">
-                    <option value="all">Show All Stockpiles</option>
-                    <option value="ore_only" selected>Ore Only (Recommended)</option>
-                    <option value="waste_only">Waste Only</option>
-                </select>
-            </div>
+        
+        <div class="d-flex gap-2">
+            <button class="btn btn-primary shadow" data-bs-toggle="modal" data-bs-target="#addActualModal">
+                <i class="fas fa-edit mr-2"></i> Add Actuals
+            </button>
         </div>
     </div>
 
     <div class="card shadow mb-4 border-0">
         <div class="card-header bg-dark text-white fw-bold d-flex justify-content-between align-items-center">
-            <span><i class="fas fa-chart-bar me-2"></i> Inventory Levels vs Projection</span>
-            <span id="chartLabel" class="badge bg-info text-dark">Ore Only</span>
+            <span><i class="fas fa-chart-bar me-2"></i> Cumulative Inventory Status</span>
+            <span class="badge bg-primary">Current / End of Plan</span>
         </div>
         <div class="card-body bg-dark">
-            <div id="chartContainer" style="position: relative; height: 400px;"> 
+            <div style="height: 400px;"> 
                 <canvas id="stockpileChart"></canvas>
             </div>
         </div>
@@ -62,39 +38,32 @@
 
     <div class="card shadow mb-4 border-0">
         <div class="card-header bg-dark text-white fw-bold">
-            <i class="fas fa-list me-2"></i> Detailed Breakdown
+            <i class="fas fa-list me-2"></i> Detailed Period Breakdown
         </div>
         <div class="card-body bg-white p-0">
-            <div class="table-responsive">
-                <table class="table table-striped table-hover mb-0" id="stockpileTable">
-                    <thead class="bg-light text-dark">
+            <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="bg-light text-dark" style="position: sticky; top: 0; z-index: 1;">
                         <tr>
-                            <th>Stockpile Name</th>
-                            <th class="text-end">Actual (t)</th>
-                            <th class="text-end">Safety Target (t)</th>
-                            <th class="text-end">Grade (g/t)</th>
-                            <th class="text-end">Variance (t)</th>
-                            <th class="text-end">Variance (%)</th>
+                            <th>Period / Stockpile Type</th>
+                            <th class="text-end">Actual (Survey)</th>
+                            <th class="text-end">Projected (Cumulative)</th>
+                            <th class="text-end">Variance</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for s in stockpile_data %}
+                        {% for row in detailed_data %}
                         <tr>
-                            <td class="fw-bold">{{ s.name }}</td>
-                            <td class="text-end fw-bold">{{ s.current_tonnage|floatformat:0|intcomma }}</td>
-                            <td class="text-end text-muted">{{ s.projected_tonnage|floatformat:0|intcomma }}</td>
-                            <td class="text-end">{{ s.grade|default:"0.0" }}</td>
-                            
-                            <td class="text-end fw-bold" style="color: {% if s.variance >= 0 %}#198754{% else %}#dc3545{% endif %};">
-                                {{ s.variance|floatformat:0|intcomma }}
-                            </td>
-                            <td class="text-end fw-bold" style="color: {% if s.variance_percent >= 0 %}#198754{% else %}#dc3545{% endif %};">
-                                {{ s.variance_percent|floatformat:1 }}%
+                            <td class="fw-bold" style="color: {{ row.color }}">{{ row.name }}</td>
+                            <td class="text-end">{{ row.actual|floatformat:0|intcomma }}</td>
+                            <td class="text-end text-muted">{{ row.projected|floatformat:0|intcomma }}</td>
+                            <td class="text-end fw-bold" style="color: {% if row.variance >= 0 %}#198754{% else %}#dc3545{% endif %};">
+                                {{ row.variance|floatformat:0|intcomma }}
                             </td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="6" class="text-center py-4 text-muted">No stockpile data available.</td>
+                            <td colspan="4" class="text-center py-4 text-muted">No schedule data available.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -102,206 +71,107 @@
             </div>
         </div>
     </div>
-
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<div class="modal fade" id="addActualModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">Record Actual Stockpile Survey</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="form-group mb-3">
+                        <label class="font-weight-bold">Select Period</label>
+                        <select name="period" class="form-control">
+                            {% for p in periods %}
+                            <option value="{{ p }}">Period {{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <hr>
+                    <div class="row">
+                        <div class="col-md-4">
+                            <h6 class="text-success font-weight-bold">High Grade</h6>
+                            <input type="number" step="0.1" name="hg_tonnage" class="form-control mb-2" placeholder="Tonnes">
+                            <input type="number" step="0.01" name="hg_grade" class="form-control" placeholder="Grade (g/t)">
+                        </div>
+                        <div class="col-md-4">
+                            <h6 class="text-warning font-weight-bold" style="color:#d39e00!important">Medium Grade</h6>
+                            <input type="number" step="0.1" name="mg_tonnage" class="form-control mb-2" placeholder="Tonnes">
+                            <input type="number" step="0.01" name="mg_grade" class="form-control" placeholder="Grade (g/t)">
+                        </div>
+                        <div class="col-md-4">
+                            <h6 class="text-danger font-weight-bold">Low Grade</h6>
+                            <input type="number" step="0.1" name="lg_tonnage" class="form-control mb-2" placeholder="Tonnes">
+                            <input type="number" step="0.01" name="lg_grade" class="form-control" placeholder="Grade (g/t)">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save Actuals</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
-let myChart = null; // Store chart instance globally
-
-// 1. Capture Full Data from Django
-// We iterate through the list to build a JS Array of Objects
-const fullData = [
-    {% for s in stockpile_data %}
-    {
-        name: "{{ s.name }}",
-        actual: {{ s.current_tonnage }},
-        target: {{ s.projected_tonnage }},
-        grade: {{ s.grade|default:0 }},
-        color: "{{ s.color }}",
-        border: "{{ s.border }}"
-    },
-    {% endfor %}
-];
-
+// --- CHART LOGIC (Simplified: No Filter needed) ---
 document.addEventListener('DOMContentLoaded', () => {
-    // Default to "Ore Only" on load to solve the squashing issue
-    updateChartFilter();
-});
-
-function updateChartFilter() {
-    const filterType = document.getElementById('stockpileFilter').value;
-    const labelBadge = document.getElementById('chartLabel');
-    
-    let filteredData = [];
-    
-    // Filtering Logic
-    if (filterType === 'all') {
-        // Show EVERYTHING (including ROM and Waste)
-        filteredData = fullData;
-        labelBadge.innerText = "All Stockpiles";
-        labelBadge.className = "badge bg-secondary";
-        
-    } else if (filterType === 'ore_only') {
-        // NEW LOGIC: Exclude Waste AND ROM/Mixed
-        // This removes the 1.8M tonne giant so the chart zooms in on the Graded Ore
-        filteredData = fullData.filter(item => 
-            !item.name.toLowerCase().includes('waste') && 
-            !item.name.toLowerCase().includes('rom') &&
-            !item.name.toLowerCase().includes('mixed')
-        );
-        labelBadge.innerText = "Graded Ore (High/Med/Low)";
-        labelBadge.className = "badge bg-info text-dark";
-        
-    } else if (filterType === 'waste_only') {
-        // Show Waste Only
-        filteredData = fullData.filter(item => item.name.toLowerCase().includes('waste'));
-        labelBadge.innerText = "Waste Only";
-        labelBadge.className = "badge bg-secondary";
-    }
-
-    renderChart(filteredData);
-}
-
-function renderChart(data) {
     const ctx = document.getElementById('stockpileChart').getContext('2d');
     
-    // Destroy old chart to prevent "flickering" or overlapping
-    if (myChart) {
-        myChart.destroy();
-    }
+    // Data passed directly from View
+    const chartData = [
+        {% for item in chart_data %}
+        {
+            name: "{{ item.name }}",
+            projected: {{ item.projected }},
+            actual: {{ item.actual }},
+            color: "{{ item.color }}",
+            border: "{{ item.border }}"
+        },
+        {% endfor %}
+    ];
 
-    // Map data for Chart.js
-    const labels = data.map(d => d.name);
-    const actuals = data.map(d => d.actual);
-    const targets = data.map(d => d.target);
-    const colors = data.map(d => d.color);
-    const borders = data.map(d => d.border);
-
-    myChart = new Chart(ctx, {
+    new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: labels,
+            labels: chartData.map(d => d.name),
             datasets: [
                 {
-                    label: 'Actual Inventory',
-                    data: actuals,
-                    backgroundColor: colors,
-                    borderColor: borders,
-                    borderWidth: 1,
-                    order: 1
+                    label: 'Latest Actual (Survey)',
+                    data: chartData.map(d => d.actual),
+                    backgroundColor: chartData.map(d => d.color),
+                    borderColor: chartData.map(d => d.border),
+                    borderWidth: 1
                 },
                 {
-                    label: 'Safety Target',
-                    data: targets,
+                    label: 'Total Projected (Plan)',
+                    data: chartData.map(d => d.projected),
                     type: 'line',
                     borderColor: '#ffffff',
                     borderDash: [5, 5],
                     pointBackgroundColor: '#ffffff',
                     borderWidth: 2,
                     fill: false,
-                    tension: 0.1,
-                    order: 0
+                    tension: 0.1
                 }
             ]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: { labels: { color: '#ffffff' } },
-                tooltip: {
-                    callbacks: {
-                        afterBody: function(context) {
-                            const idx = context[0].dataIndex;
-                            const item = data[idx];
-                            const diff = item.actual - item.target;
-                            return [
-                                `Grade: ${item.grade.toFixed(2)} g/t`,
-                                `${diff >= 0 ? "Surplus" : "Deficit"}: ${diff.toLocaleString()} t`
-                            ];
-                        }
-                    }
-                }
-            },
+            plugins: { legend: { labels: { color: '#ffffff' } } },
             scales: {
-                y: {
-                    beginAtZero: true,
-                    title: { display: true, text: 'Tonnes', color: '#aaaaaa' },
-                    grid: { color: '#444' },
-                    ticks: { color: '#fff' }
-                },
-                x: {
-                    grid: { display: false },
-                    ticks: { color: '#fff' }
-                }
+                y: { beginAtZero: true, ticks: { color: '#fff' }, grid: { color: '#444' } },
+                x: { ticks: { color: '#fff' }, grid: { display: false } }
             }
         }
     });
-}
-
-// --- CSV Export Function ---
-function exportStockpileCSV() {
-    const table = document.getElementById("stockpileTable");
-    let rows = [];
-    
-    // Headers
-    let headers = [];
-    table.querySelectorAll("thead th").forEach(th => headers.push(th.innerText));
-    rows.push(headers.join(","));
-
-    // Rows
-    table.querySelectorAll("tbody tr").forEach(tr => {
-        let rowData = [];
-        tr.querySelectorAll("td").forEach(td => rowData.push(td.innerText));
-        rows.push(rowData.join(","));
-    });
-
-    const csvContent = "data:text/csv;charset=utf-8," + rows.join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "stockpile_report.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-// --- PDF Export Function ---
-function exportStockpilePDF() {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF('p', 'mm', 'a4');
-
-    doc.setFontSize(18);
-    doc.text("Stockpile Forecast Report", 14, 15);
-    doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
-
-    // Capture Chart (White Background for PDF)
-    const canvas = document.getElementById('stockpileChart');
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvas.width;
-    tempCanvas.height = canvas.height;
-    const tempCtx = tempCanvas.getContext('2d');
-    
-    // Draw white background
-    tempCtx.fillStyle = '#ffffff'; 
-    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-    tempCtx.drawImage(canvas, 0, 0);
-    
-    const chartImg = tempCanvas.toDataURL('image/png', 1.0);
-    doc.addImage(chartImg, 'PNG', 10, 30, 190, 80);
-
-    doc.autoTable({
-        html: '#stockpileTable',
-        startY: 120,
-        theme: 'grid',
-        headStyles: { fillColor: [40, 40, 40] },
-        styles: { fontSize: 9 }
-    });
-
-    doc.save('stockpile_report.pdf');
-}
+});
 </script>
 {% endblock %}
