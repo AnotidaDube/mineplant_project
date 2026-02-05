@@ -401,3 +401,11 @@ class PeriodStockpileActual(models.Model):
 
     def __str__(self):
         return f"Actuals: Pd {self.period} - {self.scenario.name}"
+    
+class DailyPlantFeed(models.Model):
+    date = models.DateField(unique=True)
+    tonnes_fed = models.FloatField(help_text="Tonnes supplied to plant today")
+    comments = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.date}: {self.tonnes_fed}t"

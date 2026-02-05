@@ -27,6 +27,8 @@
         <div class="card-body bg-light">
             <form method="post" class="row g-3 align-items-end">
                 {% csrf_token %}
+                <input type="hidden" name="action" value="update_settings"> 
+                
                 <div class="col-md-3">
                     <label class="form-label fw-bold text-dark">Gold Price ($/g)</label>
                     <div class="input-group">
@@ -55,6 +57,49 @@
         </div>
     </div>
 
+    <div class="card shadow mb-4 border-left-success">
+        <div class="card-header bg-white py-3">
+            <h6 class="m-0 font-weight-bold text-success"><i class="fas fa-chart-line me-2"></i>IRR / Investment Return Calculator</h6>
+        </div>
+        <div class="card-body">
+            <form method="post" class="row g-3 align-items-end">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="calculate_irr">
+                
+                <div class="col-md-3">
+                    <label class="form-label fw-bold text-dark">Initial Investment ($)</label>
+                    {{ irr_form.initial_investment }}
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold text-dark">Periods (n)</label>
+                    {{ irr_form.periods }}
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check mb-2">
+                        {{ irr_form.include_stockpile }}
+                        <label class="form-check-label text-dark">Include Stockpile Value?</label>
+                    </div>
+                    <button type="submit" class="btn btn-success w-100 shadow-sm">
+                        <i class="fas fa-percentage me-2"></i> Calculate Return
+                    </button>
+                </div>
+                
+                {% if irr_result %}
+                <div class="col-md-3 text-center border-start">
+                    <h6 class="text-uppercase text-secondary small font-weight-bold">Estimated Return</h6>
+                    <h2 class="mb-0 font-weight-bold {% if irr_result.irr > 0 %}text-success{% else %}text-danger{% endif %}">
+                        {{ irr_result.irr }}%
+                    </h2>
+                    <small class="text-muted d-block">Total Return: ${{ irr_result.total_return|floatformat:0|intcomma }}</small>
+                    {% if irr_result.is_stockpile_included %}
+                    <span class="badge bg-warning text-dark mt-1">Stockpile Included</span>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+
     <div class="card shadow mb-4 border-0">
         <div class="card-header bg-dark text-white d-flex justify-content-between">
             <h6 class="m-0 font-weight-bold">Revenue vs Expenditure</h6>
@@ -72,10 +117,10 @@
                             <th colspan="4" class="text-center">Financials ($ USD)</th>
                         </tr>
                         <tr>
-                            <th class="text-end text-light">Ore</th>
-                            <th class="text-end text-light">Waste</th>
-                            <th class="text-end border-end text-light">Total</th>
-                            
+                            <th class="text-end text-dark">Ore</th>
+                            <th class="text-end text-dark">Waste</th>
+                            <th class="text-end border-end text-dark">Total</th>
+
                             <th class="text-center text-success">Milled</th>
                             <th class="text-center border-end text-warning">Stockpile</th>
                             
@@ -90,9 +135,9 @@
                         <tr>
                             <td class="text-center fw-bold">{{ row.period }}</td>
                             
-                            <td class="text-end">{{ row.ore|floatformat:0|intcomma }}</td>
+                            <td class="text-end">{{ row.ore_mined|floatformat:0|intcomma }}</td>
                             <td class="text-end text-muted">{{ row.waste|floatformat:0|intcomma }}</td>
-                            <td class="text-end border-end fw-bold">{{ row.total_mined|floatformat:0|intcomma }}</td>
+                            <td class="text-end border-end fw-bold">{{ row.ore_mined|add:row.waste|floatformat:0|intcomma }}</td>
                             
                             <td class="text-center text-success fw-bold">{{ row.processed|floatformat:0|intcomma }}</td>
                             <td class="text-center border-end text-warning fw-bold">{{ row.stockpiled|floatformat:0|intcomma }}</td>

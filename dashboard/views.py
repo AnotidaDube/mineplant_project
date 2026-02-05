@@ -42,7 +42,9 @@ from .forms import (
     ExpectedValuesForm,
     BlockModelUploadForm,
     PlantForm,
-    PitAliasForm
+    PitAliasForm,
+    DailyFeedForm,
+    IRRCalculationForm
 )
 from .models import (
     MinePhase, 
@@ -56,7 +58,8 @@ from .models import (
     FinancialSettings,
     PitBlock, 
     DailyProductionLog,
-    PeriodStockpileActual
+    PeriodStockpileActual,
+    DailyPlantFeed
 
 )
 from .serializers import (
@@ -1749,17 +1752,21 @@ def pit_config_view(request):
 
 def cash_flow_view(request, pk):
     """
-    Cash Flow Analysis (Grams Only).
-    Calculates Revenue based on $/g and adds Stockpile Potential Value.
+    Financial Analysis + IRR Calculator.
     """
     scenario = get_object_or_404(ScheduleScenario, pk=pk)
     settings, _ = FinancialSettings.objects.get_or_create(scenario=scenario)
+    
+    # Initialize IRR Form
+    irr_form = IRRCalculationForm(request.POST if request.method == "POST" and request.POST.get('action') == 'calculate_irr' else None)
+    irr_result = None
 
-    # 1. Handle Updates (Recalculate Button)
-    if request.method == "POST":
+    # 1. Handle SETTINGS Updates
+    if request.method == "POST" and request.POST.get('action') == 'update_settings':
         try:
             settings.gold_price = float(request.POST.get('gold_price', 0))
-            settings.plant_capacity = float(request.POST.get('plant_capacity', 0))
+            input_cap = float(request.POST.get('plant_capacity', 0))
+            settings.plant_capacity = input_cap if input_cap > 0 else 23400.0
             settings.base_mining_cost = float(request.POST.get('mining_cost', 0))
             settings.processing_cost = float(request.POST.get('processing_cost', 0))
             settings.save()
@@ -1768,84 +1775,136 @@ def cash_flow_view(request, pk):
             messages.error(request, "Invalid input.")
         return redirect('cash_flow', pk=pk)
 
-    # 2. Get Schedule Data by Period
-    # We group by period to show the table rows
+    PLANT_CAPACITY = settings.plant_capacity if settings.plant_capacity > 0 else 23400.0
+
+    # 2. Build the Cash Flow Table (Existing Logic)
     periods = MaterialSchedule.objects.filter(scenario=scenario).values_list('period', flat=True).distinct().order_by('period')
     
     table_data = []
-    
     cumulative_cashflow = 0
-
+    
     for p in periods:
-        # Get totals for this period
-        data = MaterialSchedule.objects.filter(scenario=scenario, period=p).aggregate(
-            total_waste=Sum(Case(When(material_type='waste', then='mass'), default=0, output_field=FloatField())),
-            total_ore=Sum(Case(When(material_type__in=['low_grade', 'medium_grade', 'high_grade'], then='mass'), default=0, output_field=FloatField())),
-            weighted_grade=Sum(F('mass') * F('grade'), output_field=FloatField())
-        )
+        rows = MaterialSchedule.objects.filter(scenario=scenario, period=p)
         
-        waste = data['total_waste'] or 0
-        ore = data['total_ore'] or 0
-        total_mined = waste + ore
+        # --- Sorting & Processing Logic (High Grade First) ---
+        waste_mass = 0.0
+        ore_batches = [] 
+
+        for row in rows:
+            name = row.material_type.lower()
+            mass = row.mass if row.mass else 0.0
+            grade = row.grade if row.grade else 0.0
+
+            if 'waste' in name:
+                waste_mass += mass
+            else:
+                ore_batches.append({'mass': mass, 'grade': grade})
+
+        ore_batches.sort(key=lambda x: x['grade'], reverse=True)
+
+        remaining_cap = PLANT_CAPACITY
+        processed_mass = 0.0
+        processed_metal = 0.0
+        stockpiled_mass = 0.0
+        stockpiled_metal = 0.0
+
+        for batch in ore_batches:
+            b_mass = batch['mass']
+            b_grade = batch['grade']
+            
+            if remaining_cap > 0:
+                to_process = min(b_mass, remaining_cap)
+                processed_mass += to_process
+                processed_metal += (to_process * b_grade)
+                remaining_cap -= to_process
+                
+                remainder = b_mass - to_process
+                if remainder > 0:
+                    stockpiled_mass += remainder
+                    stockpiled_metal += (remainder * b_grade)
+            else:
+                stockpiled_mass += b_mass
+                stockpiled_metal += (b_mass * b_grade)
+
+        head_grade = (processed_metal / processed_mass) if processed_mass > 0 else 0.0
         
-        # Calculate Average Grade
-        avg_grade = (data['weighted_grade'] / ore) if ore > 0 else 0
-        
-        # --- YOUR LOGIC APPLIED HERE ---
-        
-        # 1. Processing vs Stockpile Split
-        capacity = settings.plant_capacity
-        processed_tonnes = min(ore, capacity)
-        stockpiled_tonnes = max(0, ore - capacity)
-        
-        # 2. Gold Produced (Grams)
-        # Formula: Tonnes * Grade * Recovery
-        gold_produced_g = processed_tonnes * avg_grade * settings.recovery_rate
-        
-        # 3. Revenue ($)
-        # Formula: Grams * Price/g
+        # Financials
+        gold_produced_g = processed_metal * settings.recovery_rate
         revenue = gold_produced_g * settings.gold_price
         
-        # 4. Costs ($)
-        # Mining Cost: Applied to TOTAL movement (Ore + Waste) because you pay to move waste too!
-        mining_cost = total_mined * settings.base_mining_cost
-        
-        # Processing Cost: Applied only to PROCESSED tonnes
-        processing_cost = processed_tonnes * settings.processing_cost
+        total_ore_mined = processed_mass + stockpiled_mass
+        total_moved = total_ore_mined + waste_mass
+        mining_cost = total_moved * settings.base_mining_cost
+        processing_cost = processed_mass * settings.processing_cost
         
         total_cost = mining_cost + processing_cost
-        
-        # 5. Net Cash Flow
         net_cash_flow = revenue - total_cost
         cumulative_cashflow += net_cash_flow
         
-        # 6. STOCKPILE VALUE (The New Column)
-        # Value = Stockpiled Tonnes * Grade * Recovery * Price
-        # This is "Potential Revenue" sitting on the pad
-        stockpile_gold_g = stockpiled_tonnes * avg_grade * settings.recovery_rate
+        stockpile_gold_g = stockpiled_metal * settings.recovery_rate
         stockpile_value = stockpile_gold_g * settings.gold_price
 
         table_data.append({
             'period': p,
-            'ore': ore,
-            'waste': waste,
-            'total_mined': total_mined,
-            'processed': processed_tonnes,
-            'stockpiled': stockpiled_tonnes,
-            'grade': avg_grade,
+            'ore_mined': total_ore_mined,
+            'waste': waste_mass,
+            'processed': processed_mass,
+            'stockpiled': stockpiled_mass,
+            'grade': head_grade,
             'revenue': revenue,
             'mining_cost': mining_cost,
             'processing_cost': processing_cost,
             'total_cost': total_cost,
             'net_cash_flow': net_cash_flow,
-            'stockpile_value': stockpile_value # <--- New Data Point
+            'stockpile_value': stockpile_value
         })
+
+    # 3. IRR / ROI CALCULATION LOGIC (New Feature)
+    # Calculate Totals from the generated table
+    total_processed_cf = sum(item['net_cash_flow'] for item in table_data)
+    total_stockpile_val = sum(item['stockpile_value'] for item in table_data)
+
+    if request.method == "POST" and request.POST.get('action') == 'calculate_irr':
+        if irr_form.is_valid():
+            initial_inv = irr_form.cleaned_data['initial_investment']
+            user_n = irr_form.cleaned_data['periods']
+            include_stock = irr_form.cleaned_data['include_stockpile']
+
+            # A. Auto-Connect Total Cash Flow
+            final_cash_flow = total_processed_cf
+            
+            # B. Optional Stockpile Addition
+            if include_stock:
+                final_cash_flow += total_stockpile_val
+
+            # C. Determine Periods (n)
+            n = user_n if user_n else len(periods)
+
+            # D. The Formula: (Total / Initial)^(1/n) - 1
+            # Note: This is an annualized ROI approximation as requested
+            try:
+                if final_cash_flow > 0:
+                    irr_decimal = (final_cash_flow / initial_inv) ** (1/n) - 1
+                else:
+                    irr_decimal = -1.0 # Total loss
+
+                irr_result = {
+                    'irr': round(irr_decimal * 100, 2),
+                    'total_return': final_cash_flow,
+                    'initial': initial_inv,
+                    'n': n,
+                    'is_stockpile_included': include_stock
+                }
+            except ZeroDivisionError:
+                irr_result = {'error': "Periods cannot be zero."}
 
     return render(request, 'dashboard/cash_flow.html', {
         'scenario': scenario,
         'settings': settings,
         'table_data': table_data,
-        'cumulative_cashflow': cumulative_cashflow
+        'cumulative_cashflow': cumulative_cashflow,
+        'irr_form': irr_form,       # Pass form to template
+        'irr_result': irr_result    # Pass result to template
     })
 
 def settings_view(request):
@@ -1909,3 +1968,78 @@ def settings_view(request):
         'active_scenario': active_scenario,
         'scenarios': all_scenarios
     })
+
+def daily_financials_view(request):
+    """
+    Manual Daily Plant Feed & Cash Flow Visualization.
+    INTEGRATED: Fetches Gold Price, Costs, and Recovery from 'Settings'.
+    """
+    # 1. Handle Form Submission
+    if request.method == 'POST':
+        form = DailyFeedForm(request.POST)
+        if form.is_valid():
+            # Save or Update existing date
+            obj, created = DailyPlantFeed.objects.update_or_create(
+                date=form.cleaned_data['date'],
+                defaults={'tonnes_fed': form.cleaned_data['tonnes_fed'], 'comments': form.cleaned_data['comments']}
+            )
+            messages.success(request, f"Updated Plant Feed for {obj.date}")
+            return redirect('daily_financials')
+    else:
+        form = DailyFeedForm()
+
+    # 2. Get Dynamic Financial Settings (CONNECT TO SETTINGS)
+    # Find the active scenario first
+    active_scenario = ScheduleScenario.objects.filter(is_active=True).first()
+    if not active_scenario:
+        active_scenario = ScheduleScenario.objects.last()
+
+    # Get the settings object linked to this scenario
+    settings_obj = None
+    if active_scenario:
+        settings_obj = FinancialSettings.objects.filter(scenario=active_scenario).first()
+
+    # Define variables (Use Database values, fallback to defaults if missing)
+    if settings_obj:
+        PRICE = settings_obj.gold_price
+        RECOVERY = settings_obj.recovery_rate
+        # For daily cost, we sum Mining + Processing as a rough per-tonne estimate
+        COST_PER_TONNE = settings_obj.base_mining_cost + settings_obj.processing_cost
+    else:
+        # Emergency Fallback if no settings exist
+        PRICE = 55.0
+        RECOVERY = 0.90
+        COST_PER_TONNE = 25.0 
+
+    # 3. Calculate Daily Financials
+    daily_data = []
+    feeds = DailyPlantFeed.objects.all().order_by('-date')
+    
+    for feed in feeds:
+        # Find mining data for this specific date
+        mining_rec = ProductionRecord.objects.filter(timestamp__date=feed.date).first()
+        
+        # If we mined that day, use the mined grade. If not, assume average 1.5g/t
+        grade = mining_rec.grade if (mining_rec and mining_rec.grade) else 1.5
+        
+        # Calculations using DYNAMIC settings
+        gold_produced = feed.tonnes_fed * grade * RECOVERY
+        revenue = gold_produced * PRICE
+        cost = feed.tonnes_fed * COST_PER_TONNE
+        profit = revenue - cost
+        
+        daily_data.append({
+            'date': feed.date,
+            'feed_t': feed.tonnes_fed,
+            'grade': grade,
+            'revenue': revenue,
+            'profit': profit,
+            'source': mining_rec.source if mining_rec else "Stockpile/Unknown"
+        })
+
+    context = {
+        'form': form,
+        'daily_data': daily_data,
+        'settings': settings_obj  # Pass settings to template if you want to display current assumptions
+    }
+    return render(request, 'dashboard/daily_financials.html', context)

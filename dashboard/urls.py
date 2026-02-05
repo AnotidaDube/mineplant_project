@@ -30,7 +30,7 @@ urlpatterns = [
     path('dashboard/stockpile_forecast/', views.stockpile_forecast, name='stockpile-forecast'),
     path('production_summary/', views.production_summary, name='production_summary'),
     path('mass-analysis/', views.mass_analysis_view, name='mass_analysis'),
-    
+    path('daily-financials/', views.daily_financials_view, name='daily_financials'),
     # ==========================
     # 4. Processing Plant
     # ==========================

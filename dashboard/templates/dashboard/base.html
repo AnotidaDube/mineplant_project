@@ -173,6 +173,10 @@
                 <i class="fas fa-exclamation-triangle"></i> Processing Loss
             </a>
 
+            <a class="nav-link {% if request.resolver_match.url_name == 'daily_financials' %}active{% endif %}" href="{% url 'daily_financials' %}">
+                <i class="fas fa-cash-register"></i> Daily Financials
+            </a>
+
             <div class="sidebar-heading">Strategic Planning</div>
 
             <a class="nav-link {% if request.resolver_match.url_name == 'upload_schedule' %}active{% endif %}" href="{% url 'upload_schedule' %}">

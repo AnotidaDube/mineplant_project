@@ -1,6 +1,6 @@
 from django import forms
 from django.core.exceptions import ValidationError
-from .models import ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule, MinePhase, Plant
+from .models import ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule, MinePhase, Plant, DailyPlantFeed
 
 class PlantForm(forms.ModelForm):
     class Meta:
@@ -225,3 +225,36 @@ class PitAliasForm(forms.ModelForm):
         widgets = {
             'csv_match_name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'e.g. macsluck_pit'}),
         }
+
+class DailyFeedForm(forms.ModelForm):
+    class Meta:
+        model = DailyPlantFeed
+        fields = ['date', 'tonnes_fed', 'comments']
+        widgets = {
+            'date': forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
+            'tonnes_fed': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Enter Tonnes Supplied'}),
+            'comments': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Notes (Optional)'}),
+        }
+
+class IRRCalculationForm(forms.Form):
+    """
+    Form for ROI/IRR Calculator.
+    """
+    initial_investment = forms.FloatField(
+        label="Initial Investment ($)", 
+        min_value=0.01,
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'e.g. 3000000'})
+    )
+    periods = forms.IntegerField(
+        label="Number of Periods (n)", 
+        required=False, 
+        min_value=1,
+        help_text="Leave blank to use the Schedule's length automatically.",
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Auto-connect'})
+    )
+    include_stockpile = forms.BooleanField(
+        label="Include Stockpile Value?", 
+        required=False, 
+        initial=False,
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
+    )
