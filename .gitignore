@@ -1,4 +1,9 @@
+# Python cache
+__pycache__/
+*.pyc
 
-dashboard/static/data/ore_blocks.csv
+# SQLite database
+db.sqlite3
 
-dashboard/static/data/waste_blocks.csv
+# CSV data files
+dashboard/static/data/*.csv
