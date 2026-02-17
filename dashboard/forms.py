@@ -1,6 +1,6 @@
 from django import forms
 from django.core.exceptions import ValidationError
-from .models import ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule, MinePhase, Plant, DailyPlantFeed
+from .models import ProductionRecord, OreSample, PlantDemand, Stockpile, PhaseSchedule, MinePhase, Plant, DailyPlantFeed, PeriodConfiguration
 
 class PlantForm(forms.ModelForm):
     class Meta:
@@ -257,4 +257,33 @@ class IRRCalculationForm(forms.Form):
         required=False, 
         initial=False,
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
+    )
+
+class PeriodConfigForm(forms.ModelForm):
+    """
+    Mode 1: Manual Period Entry
+    Used to update a single period's mining cost.
+    """
+    class Meta:
+        model = PeriodConfiguration
+        fields = ['mining_cost_per_tonne']
+        labels = {'mining_cost_per_tonne': 'Mining Cost ($/t)'}
+        widgets = {
+            'mining_cost_per_tonne': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'})
+        }
+
+class AutoIncrementCostForm(forms.Form):
+    """
+    Mode 2: Auto-Calculation
+    Used to apply the $0.10 increment rule across all periods.
+    """
+    base_cost = forms.FloatField(
+        label="Base Cost ($)", 
+        initial=4.50,
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'})
+    )
+    increment = forms.FloatField(
+        label="Increment per Period ($)", 
+        initial=0.10,
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'})
     )

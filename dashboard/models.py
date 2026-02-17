@@ -269,41 +269,39 @@ class ScheduleScenario(models.Model):
 
 class MaterialSchedule(models.Model):
     """
-    Stores the rows from your MineSched CSV export.
-    This is the RAW PLAN data.
+    Physical movement per period (High/Med/Low Grade split).
+    Updated to store mass in columns for easier processing.
     """
-    scenario = models.ForeignKey(ScheduleScenario, on_delete=models.CASCADE, related_name='schedules')
-    period = models.IntegerField(help_text="Period Number (e.g., 1, 2, 3)")
-    start_date = models.DateField()
-    end_date = models.DateField()
-    phase_name = models.CharField(max_length=100, blank=True, null=True, help_text="e.g., 'Phase 1' or 'mucs_luck_pit'")
+    scenario = models.ForeignKey(ScheduleScenario, on_delete=models.CASCADE, related_name='movements', null=True)
+    period = models.IntegerField()
     
-    source = models.CharField(max_length=100)
-    destination = models.CharField(max_length=100)
+    # NEW FIELDS (Required for the View)
+    hg_tonnes = models.FloatField(default=0)
+    hg_grade = models.FloatField(default=0)
     
-    material_type = models.CharField(max_length=50, choices=[
-        ('waste', 'Waste'), ('low_grade', 'Low Grade'), ('medium_grade', 'Medium Grade'), ('high_grade', 'High Grade'),
-    ])
+    mg_tonnes = models.FloatField(default=0)
+    mg_grade = models.FloatField(default=0)
     
-    volume = models.FloatField(default=0)
-    mass = models.FloatField(default=0)
-    haul_distance = models.FloatField(default=0) 
-    grade = models.FloatField(default=0)
-
-    # --- [CHANGED/NEW SECTION] ---
-    # Added 'fleet' to capture the "Resource" column (e.g., fleet1)
-    fleet = models.CharField(max_length=100, blank=True, null=True, help_text="e.g. fleet1, load_and_haul")
+    lg_tonnes = models.FloatField(default=0)
+    lg_grade = models.FloatField(default=0)
     
-    # Added 'metadata' to capture "Activity", "aggregate", and "Quantity"
-    # This prevents the system from breaking if you add new columns later.
-    metadata = models.JSONField(default=dict, blank=True, help_text="Stores extra CSV columns like Activity, Aggregate, etc.")
-    # -----------------------------
+    waste_tonnes = models.FloatField(default=0)
+    
+    # Computed totals
+    total_mined_tonnes = models.FloatField(default=0) 
+    weighted_mined_grade = models.FloatField(default=0)
 
     class Meta:
-        ordering = ['period', 'material_type']
+        ordering = ['period']
+        unique_together = ('scenario', 'period')
 
-    def __str__(self):
-        return f"Pd {self.period} - {self.material_type} ({self.mass}t)"
+    def save(self, *args, **kwargs):
+        self.total_mined_tonnes = self.hg_tonnes + self.mg_tonnes + self.lg_tonnes + self.waste_tonnes
+        # Weighted grade calc
+        metal = (self.hg_tonnes * self.hg_grade) + (self.mg_tonnes * self.mg_grade) + (self.lg_tonnes * self.lg_grade)
+        ore = self.hg_tonnes + self.mg_tonnes + self.lg_tonnes
+        self.weighted_mined_grade = metal / ore if ore > 0 else 0
+        super().save(*args, **kwargs)
 
 class MonthlyProductionPlan(models.Model):
     """
@@ -409,3 +407,26 @@ class DailyPlantFeed(models.Model):
 
     def __str__(self):
         return f"{self.date}: {self.tonnes_fed}t"
+
+class PeriodConfiguration(models.Model):
+    """
+    Financial Configuration (Variable Mining Cost).
+    Allows specific cost setting per period (e.g., $4.50 vs $5.00).
+    """
+    physical_schedule = models.OneToOneField('MaterialSchedule', on_delete=models.CASCADE, related_name='config')
+    mining_cost_per_tonne = models.FloatField(default=4.5)
+
+    def __str__(self):
+        return f"Cost P{self.physical_schedule.period}: ${self.mining_cost_per_tonne}"
+
+class StockpileState(models.Model):
+    """
+    Stockpile Status at the END of a period.
+    Tracks the physical balance carried over to the next month.
+    """
+    physical_schedule = models.OneToOneField('MaterialSchedule', on_delete=models.CASCADE, related_name='stockpile_state')
+    mass = models.FloatField(default=0)
+    grade = models.FloatField(default=0)
+
+    def __str__(self):
+        return f"Stockpile P{self.physical_schedule.period}: {self.mass:.0f}t"

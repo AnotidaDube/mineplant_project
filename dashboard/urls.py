@@ -9,7 +9,7 @@ urlpatterns = [
     path('dashboard/', views.mine_plant_dashboard, name='mine_plant_dashboard'),
     path('settings/', views.settings_view, name='settings'),
     
-    # This is your MAIN Pit Dashboard (The one we fixed)
+    # Main Pit Dashboard
     path('dashboard/phase_progress/', views.phase_progress_view, name='pit_phase_dashboard'),
 
     # ==========================
@@ -31,12 +31,16 @@ urlpatterns = [
     path('production_summary/', views.production_summary, name='production_summary'),
     path('mass-analysis/', views.mass_analysis_view, name='mass_analysis'),
     path('daily-financials/', views.daily_financials_view, name='daily_financials'),
+
     # ==========================
-    # 4. Processing Plant
+    # 4. Processing Plant & Financials (FIXED HERE)
     # ==========================
     path('processing/loss/', views.processing_loss_dashboard, name='processing-loss-dashboard'),
     path('processing/loss/data/', views.processing_loss_data, name='processing-loss-data'),
-    path('financials/<int:pk>/', views.cash_flow_view, name='cash_flow'),
+    
+    # CHANGED: 'pk' -> 'scenario_id' to match views.py
+    path('financials/', views.cash_flow_view, name='cash_flow_view'),
+    path('financials/<int:scenario_id>/', views.cash_flow_view, name='cash_flow_view'),
 
     # ==========================
     # 5. Data Entry Forms
@@ -57,7 +61,8 @@ urlpatterns = [
     path('pit-map/', views.pit_map_view, name='pit_map'),
     path('manage_plants/', views.manage_plants, name='manage_plants'),
 
-    #planning tool
+    # planning tool
     path('planning/', views.planning_dashboard, name='planning_dashboard'),
-    path('sync_targets/', views.sync_targets_view, name='sync-targets'),
+    # Note: 'sync_targets' is duplicated in your list, usually safe to keep one, but this one has no <int:pk>
+    path('sync_targets/', views.sync_targets_view, name='sync-targets-base'), 
 ]

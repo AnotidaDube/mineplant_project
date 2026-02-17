@@ -2,49 +2,45 @@ import base64
 import json
 import os
 import io
-from io import BytesIO
+import csv
 from datetime import date, timedelta, datetime
+
+# Data Science / Plotting
 import plotly.graph_objects as go
 from plotly.offline import plot
 import matplotlib
-# Set backend to 'Agg' before importing pyplot to avoid GUI errors on server
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image, ImageDraw
+
+# Django Core
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse, HttpResponseNotAllowed
-from django.db.models import Sum, Count, Avg, F, FloatField, ExpressionWrapper, Case, When, FloatField
-
+from django.db.models import Sum, Count, Avg, F, FloatField, ExpressionWrapper, Case, When
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.timezone import make_aware
-from django.db import models
-# ReportLab imports for Server-Side PDF generation
+from django.db import models, transaction
+from django.contrib import messages
+from django.core.serializers.json import DjangoJSONEncoder
+
+# ReportLab (PDF)
 from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.pagesizes import A4, letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
-from django.utils import timezone
+
 # DRF Imports
 from rest_framework import generics
 
 # Local Imports
 from dashboard.utils.str_parser import parse_str_file
-from .forms import (
-    ProductionRecordForm, 
-    OreSampleForm, 
-    PlantDemandForm, 
-    StockpileForm, 
-    PhaseScheduleForm, 
-    ExpectedValuesForm,
-    BlockModelUploadForm,
-    PlantForm,
-    PitAliasForm,
-    DailyFeedForm,
-    IRRCalculationForm
-)
+
+# ==========================================
+# 1. MODELS IMPORT (Consolidated)
+# ==========================================
 from .models import (
     MinePhase, 
     ProductionRecord, 
@@ -52,15 +48,43 @@ from .models import (
     PlantDemand, 
     Stockpile, 
     PhaseSchedule, 
-    Plant,
-    MonthlyProductionPlan,
-    FinancialSettings,
+    Plant, 
+    MonthlyProductionPlan, 
+    FinancialSettings, 
     PitBlock, 
-    DailyProductionLog,
-    PeriodStockpileActual,
-    DailyPlantFeed
-
+    DailyProductionLog, 
+    PeriodStockpileActual, 
+    DailyPlantFeed,
+    
+    # New Strategic Planning Models
+    ScheduleScenario,
+    MaterialSchedule,
+    PeriodConfiguration,
+    StockpileState
 )
+
+# ==========================================
+# 2. FORMS IMPORT (Consolidated)
+# ==========================================
+from .forms import (
+    ProductionRecordForm, 
+    OreSampleForm, 
+    PlantDemandForm, 
+    StockpileForm, 
+    PhaseScheduleForm, 
+    ExpectedValuesForm, 
+    BlockModelUploadForm, 
+    PlantForm, 
+    PitAliasForm, 
+    DailyFeedForm, 
+    IRRCalculationForm,
+    
+    # New Forms
+    ScheduleUploadForm,
+    PeriodConfigForm,
+    AutoIncrementCostForm
+)
+
 from .serializers import (
     MinePhaseSerializer,
     ProductionRecordSerializer,
@@ -69,14 +93,6 @@ from .serializers import (
     StockpileSerializer,
     PhaseScheduleSerializer
 )
-#imports for csv handling
-import csv
-import io
-from collections import defaultdict
-from django.contrib import messages
-from .models import ScheduleScenario, MaterialSchedule
-from .forms import ScheduleUploadForm
-
 
 # ==========================================
 # API Views (Django Rest Framework)
@@ -1185,191 +1201,283 @@ def mass_analysis_view(request):
 
     return render(request, 'dashboard/mass_analysis.html', context)
 
+@transaction.atomic
 def upload_schedule_view(request):
     """
-    Robust Importer V9 - The "End Date" Fix
-    1. Skips text rows in CSV.
-    2. Maps Dates (1-Jan-26) to Period Numbers.
-    3. Calculates End Date automatically (Start + 1 Month) to satisfy database constraints.
+    Smart Importer:
+    1. Scans your CSV to find the header row starting with "Period".
+    2. Maps your specific columns (e.g., "tonnes removed from pit low grade") 
+       to the database fields (lg_tonnes).
     """
     if request.method == "POST":
         form = ScheduleUploadForm(request.POST, request.FILES)
         if form.is_valid():
             scenario_name = form.cleaned_data['scenario_name']
             csv_file = request.FILES['csv_file']
-
-            if not csv_file.name.lower().endswith('.csv'):
-                messages.error(request, "Error: Please upload a CSV file.")
-                return redirect('upload_schedule')
-
-            # Create Scenario
-            scenario = ScheduleScenario.objects.create(name=scenario_name)
+            
+            # 1. Create Scenario
+            scenario = ScheduleScenario.objects.create(name=scenario_name, is_active=True)
+            ScheduleScenario.objects.exclude(id=scenario.id).update(is_active=False)
 
             try:
-                # 1. READ FILE & FIND HEADER
+                # 2. Pre-process File to find the Header Row
                 decoded_file = csv_file.read().decode('utf-8-sig').splitlines()
                 
-                header_row_index = -1
-                for i, line in enumerate(decoded_file[:20]):
-                    # Look for the main header row (flexible match)
-                    if 'period' in line.lower() and 'tonnes' in line.lower():
-                        header_row_index = i
+                # Find the start index (Where "Period" is in the first column)
+                header_index = 0
+                for i, line in enumerate(decoded_file):
+                    if "Period" in line:
+                        header_index = i
                         break
                 
-                if header_row_index == -1:
-                    raise Exception("Could not find header row with 'Period' and 'tonnes'.")
-
-                # 2. PARSE DATA
-                # Skip the header row itself for DictReader to consume
-                data_content = "\n".join(decoded_file[header_row_index:])
-                reader = csv.DictReader(io.StringIO(data_content))
+                # Create Reader starting from the correct header row
+                reader = csv.DictReader(decoded_file[header_index:])
                 
-                # Clean Headers (strip whitespace)
-                if reader.fieldnames:
-                    reader.fieldnames = [name.strip() for name in reader.fieldnames]
-
-                # 3. HELPER: Get Value Flexibly
+                # Normalize headers (lowercase, strip spaces) to match our search logic
+                headers = [h.lower().strip() for h in reader.fieldnames]
+                reader.fieldnames = headers
+                
+                # 3. Value Extraction Helper
                 def get_val(row, *aliases):
-                    for alias in aliases:
-                        for key in row.keys():
-                            if key and alias.lower() in key.lower():
+                    """Finds column value by fuzzy matching aliases."""
+                    for key in row.keys():
+                        if not key: continue
+                        for alias in aliases:
+                            if alias in key: # e.g. "low grade" in "tonnes removed from pit low grade"
                                 val = row[key]
-                                if val and val.strip():
-                                    return val.replace(',', '').replace('"', '').strip()
+                                if not val or val.strip() == '': return 0.0
+                                try:
+                                    # Clean string: remove commas, extra spaces
+                                    return float(str(val).replace(',', '').replace('"', '').strip())
+                                except:
+                                    pass
                     return 0.0
 
-                # 4. PRE-PROCESS DATES TO PERIOD NUMBERS
-                rows = list(reader)
-                unique_dates = set()
-                
-                for row in rows:
-                    raw_period = row.get('Period') or row.get('Period Number')
-                    if not raw_period: continue
-                    
-                    # SAFETY CHECK: Skip text rows
-                    if any(x in raw_period.lower() for x in ['start', 'tonnes', 'ore', 'g/t']):
-                        continue
-                        
-                    try:
-                        # Try to parse date
-                        for fmt in ('%d-%b-%y', '%d-%m-%y', '%Y-%m-%d', '%d/%m/%Y'):
-                            try:
-                                dt = datetime.strptime(raw_period.strip(), fmt).date()
-                                unique_dates.add(dt)
-                                break
-                            except ValueError:
-                                continue
-                    except:
-                        continue
-
-                # Create Map: Date -> Period Number (1, 2, 3...)
-                sorted_dates = sorted(list(unique_dates))
-                date_to_period_map = {d: i+1 for i, d in enumerate(sorted_dates)}
-
-                # 5. IMPORT LOOP
                 count = 0
-                for row in rows:
-                    raw_period = row.get('Period')
-                    if not raw_period: continue
+                for row in reader:
+                    # Parse Period (Handle "1-Jan-26" or just "1")
+                    period_val = get_val(row, 'period')
+                    # If it finds a number like 46000 (tonnage) in error, skip it. 
+                    # We expect small integers for period usually. 
+                    # But since your file has dates, we can just use a counter if it's not a simple number.
+                    count += 1
+                    period = count # Force sequential periods 1, 2, 3... based on row order
+
+                    # --- MAP YOUR SPECIFIC COLUMNS ---
                     
-                    # SAFETY CHECK: Skip junk rows
-                    if any(x in raw_period.lower() for x in ['start', 'tonnes', 'ore', 'g/t']):
+                    # Waste
+                    waste = get_val(row, 'pit waste', 'waste tonnes')
+                    
+                    # Low Grade
+                    lg_t = get_val(row, 'pit low grade')
+                    lg_g = get_val(row, 'avarage low', 'average low')
+                    
+                    # Medium Grade
+                    mg_t = get_val(row, 'pit medium grade')
+                    mg_g = get_val(row, 'avarage medium', 'average medium')
+                    
+                    # High Grade
+                    hg_t = get_val(row, 'removed from high')
+                    hg_g = get_val(row, 'avarage high', 'average high')
+
+                    # Mining Cost (Default 4.5 if not in CSV)
+                    cost = get_val(row, 'mining cost', 'cost')
+                    if cost == 0: cost = 4.5
+
+                    # Safety Check: Skip empty rows
+                    if (waste + lg_t + mg_t + hg_t) == 0:
+                        count -= 1 # Don't count empty rows
                         continue
 
-                    # Determine Period Number & Date
-                    period_num = None
-                    row_date = None
+                    # 4. Save to Database
+                    schedule = MaterialSchedule.objects.create(
+                        scenario=scenario,
+                        period=period,
+                        hg_tonnes=hg_t, hg_grade=hg_g,
+                        mg_tonnes=mg_t, mg_grade=mg_g,
+                        lg_tonnes=lg_t, lg_grade=lg_g,
+                        waste_tonnes=waste
+                    )
                     
-                    # Try to parse as Date first
-                    for fmt in ('%d-%b-%y', '%d-%m-%y', '%Y-%m-%d', '%d/%m/%Y'):
-                        try:
-                            row_date = datetime.strptime(raw_period.strip(), fmt).date()
-                            period_num = date_to_period_map.get(row_date)
-                            break
-                        except ValueError:
-                            pass
-                    
-                    # If not a date, assume it's an integer
-                    if period_num is None:
-                        try:
-                            period_num = int(float(raw_period))
-                            # Default date if missing (e.g., today + period months)
-                            row_date = date.today().replace(day=1) 
-                        except:
-                            continue 
-
-                    # --- CRITICAL FIX: CALCULATE END DATE ---
-                    # If we have a start date, End Date = Start Date + ~30 days
-                    if row_date:
-                        # Logic: Add 32 days, then snap to the 1st of that month, then subtract 1 day
-                        # This handles Feb (28 days) vs March (31 days) correctly
-                        next_month = (row_date.replace(day=1) + timedelta(days=32)).replace(day=1)
-                        calc_end_date = next_month - timedelta(days=1)
-                    else:
-                        # Fallback if no date found at all
-                        calc_end_date = date.today()
-                        row_date = date.today()
-
-                    # --- EXTRACT MATERIALS (Split by Column) ---
-                    
-                    # A. WASTE
-                    waste_mass = float(get_val(row, 'waste', 'pit waste'))
-                    if waste_mass > 0:
-                        MaterialSchedule.objects.create(
-                            scenario=scenario, period=period_num,
-                            material_type='waste', mass=waste_mass, grade=0.0,
-                            start_date=row_date, end_date=calc_end_date
-                        )
-
-                    # B. LOW GRADE
-                    lg_mass = float(get_val(row, 'low grade', 'low_grade'))
-                    lg_grade = float(get_val(row, 'avarage low', 'average low', 'low grade grade'))
-                    if lg_mass > 0:
-                        MaterialSchedule.objects.create(
-                            scenario=scenario, period=period_num,
-                            material_type='low_grade', mass=lg_mass, grade=lg_grade,
-                            start_date=row_date, end_date=calc_end_date
-                        )
-
-                    # C. MEDIUM GRADE
-                    mg_mass = float(get_val(row, 'medium grade', 'med grade'))
-                    mg_grade = float(get_val(row, 'avarage medium', 'average medium', 'med grade grade'))
-                    if mg_mass > 0:
-                        MaterialSchedule.objects.create(
-                            scenario=scenario, period=period_num,
-                            material_type='medium_grade', mass=mg_mass, grade=mg_grade,
-                            start_date=row_date, end_date=calc_end_date
-                        )
-
-                    # D. HIGH GRADE
-                    hg_mass = float(get_val(row, 'high grade'))
-                    hg_grade = float(get_val(row, 'avarage high', 'average high', 'high grade grade'))
-                    if hg_mass > 0:
-                        MaterialSchedule.objects.create(
-                            scenario=scenario, period=period_num,
-                            material_type='high_grade', mass=hg_mass, grade=hg_grade,
-                            start_date=row_date, end_date=calc_end_date
-                        )
-
-                    count += 1
+                    # 5. Initialize Cost Config
+                    PeriodConfiguration.objects.create(
+                        physical_schedule=schedule,
+                        mining_cost_per_tonne=cost
+                    )
 
                 if count > 0:
-                    messages.success(request, f"Successfully processed {count} rows for '{scenario.name}'.")
-                    return redirect('upload_schedule')
+                    messages.success(request, f"Success! Imported {count} periods.")
+                    return redirect('cash_flow_view', scenario_id=scenario.id)
                 else:
+                    messages.error(request, "No data rows found. Check CSV format.")
                     scenario.delete()
-                    messages.error(request, "Found headers but could not extract valid data rows.")
 
             except Exception as e:
-                scenario.delete()
-                messages.error(request, f"Upload Failed: {str(e)}")
-                return redirect('upload_schedule')
-    
+                messages.error(request, f"Import Error: {str(e)}")
+                # scenario.delete() # Optional: keep for debugging
     else:
         form = ScheduleUploadForm()
+    
+    return render(request, 'dashboard/upload_schedule.html', {'form': form})
 
-    scenarios = ScheduleScenario.objects.all().order_by('-created_at')
-    return render(request, 'dashboard/upload_schedule.html', {'form': form, 'scenarios': scenarios})
+
+# ==========================================
+# 2. CASH FLOW ENGINE (Fresh Ore Priority)
+# ==========================================
+def cash_flow_view(request, scenario_id=None):
+    """
+    Financial Engine:
+    - Auto-Increment Cost ($0.10/period)
+    - Strict Priority: HG -> MG -> LG -> Stockpile (Fixes Period 2)
+    """
+    # 1. Load Scenario
+    if not scenario_id:
+        scenario = ScheduleScenario.objects.filter(is_active=True).first() or ScheduleScenario.objects.last()
+    else:
+        scenario = get_object_or_404(ScheduleScenario, pk=scenario_id)
+
+    if not scenario:
+        return render(request, 'dashboard/cash_flow.html', {'error': 'No Scenario found.'})
+
+    # 2. Handle Manual Mining Cost Updates
+    if request.method == "POST" and 'update_single_cost' in request.POST:
+        try:
+            p_id = int(request.POST.get('period_id'))
+            new_cost = float(request.POST.get('mining_cost'))
+            
+            # Find the schedule row for this period
+            sched = MaterialSchedule.objects.filter(scenario=scenario, period=p_id).first()
+            if sched:
+                PeriodConfiguration.objects.update_or_create(
+                    physical_schedule=sched,
+                    defaults={'mining_cost_per_tonne': new_cost}
+                )
+                messages.success(request, f"Period {p_id} cost updated to ${new_cost}")
+        except Exception as e:
+            messages.error(request, f"Update Failed: {e}")
+        return redirect('cash_flow_view', scenario_id=scenario.id)
+
+    # --- 3. SIMULATION CONSTANTS ---
+    PLANT_CAPACITY = 23400.0
+    RECOVERY = 0.90
+    PRICE = 80.0
+    PROCESSING_COST = 36.0
+
+    # --- 4. RUN LOOP ---
+    schedules = MaterialSchedule.objects.filter(scenario=scenario).order_by('period')
+    
+    table_data = []
+    cumulative_cashflow = 0.0
+    
+    # Stockpile Running Balance
+    sp_mass = 0.0
+    sp_metal = 0.0 
+
+    for row in schedules:
+        # A. Cost Calculation
+        # Default: Base 4.5 + $0.10 per period (starting from Period 1)
+        # Period 1 = 4.5, Period 2 = 4.6
+        default_cost = 4.5 + ((row.period - 1) * 0.10)
+        
+        # Check for Manual Override
+        config = PeriodConfiguration.objects.filter(physical_schedule=row).first()
+        if config:
+            # If user saved a specific value, stick to it.
+            # Note: Just checking existence isn't enough if we auto-created it.
+            # We assume the user updates it manually if needed.
+            # For this logic, we use the DB value (which was init with default or updated).
+            # To force auto-calc on load if not manually touched is complex, 
+            # so we'll trust the DB value unless it's the exact upload default (4.5) for a later period.
+            if config.mining_cost_per_tonne == 4.5 and row.period > 1:
+                 mining_cost_per_t = default_cost
+            else:
+                 mining_cost_per_t = config.mining_cost_per_tonne
+        else:
+            mining_cost_per_t = default_cost
+
+        # B. Define Buckets (FRESH ORE ONLY)
+        fresh_batches = [
+            {'source': 'HG', 'mass': row.hg_tonnes, 'grade': row.hg_grade},
+            {'source': 'MG', 'mass': row.mg_tonnes, 'grade': row.mg_grade},
+            {'source': 'LG', 'mass': row.lg_tonnes, 'grade': row.lg_grade},
+        ]
+
+        # C. Fill Plant (Strict Priority: Fresh -> Stockpile)
+        remaining_cap = PLANT_CAPACITY
+        processed_mass = 0.0
+        processed_metal = 0.0
+        
+        # 1. Process Fresh First
+        for b in fresh_batches:
+            if b['mass'] <= 0 or remaining_cap <= 0: continue
+            
+            feed = min(b['mass'], remaining_cap)
+            processed_mass += feed
+            processed_metal += (feed * b['grade'])
+            remaining_cap -= feed
+            b['mass'] -= feed # Leftover stays in 'b' to be stockpiled
+
+        # 2. Process Old Stockpile (Only if space remains)
+        if remaining_cap > 0 and sp_mass > 0:
+            sp_grade = (sp_metal / sp_mass) if sp_mass > 0 else 0
+            feed = min(sp_mass, remaining_cap)
+            processed_mass += feed
+            processed_metal += (feed * sp_grade)
+            remaining_cap -= feed
+            
+            sp_mass -= feed
+            sp_metal -= (feed * sp_grade)
+
+        # D. Add Leftovers to Stockpile
+        for b in fresh_batches:
+            if b['mass'] > 0:
+                sp_mass += b['mass']
+                sp_metal += (b['mass'] * b['grade'])
+
+        sp_grade_final = (sp_metal / sp_mass) if sp_mass > 0 else 0.0
+
+        # E. Financials
+        revenue = processed_metal * RECOVERY * PRICE
+        
+        # Mining Cost (Applied to Total Mined: Ore + Waste)
+        total_mined = row.hg_tonnes + row.mg_tonnes + row.lg_tonnes + row.waste_tonnes
+        mining_exp = total_mined * mining_cost_per_t
+        
+        proc_exp = processed_mass * PROCESSING_COST
+        
+        total_cost = mining_exp + proc_exp
+        net_cash_flow = revenue - total_cost
+        cumulative_cashflow += net_cash_flow
+        
+        stockpile_val = (sp_metal * RECOVERY) * PRICE
+
+        # F. Data Packing
+        table_data.append({
+            'period': row.period,
+            'ore_mined': (row.hg_tonnes + row.mg_tonnes + row.lg_tonnes),
+            'waste': row.waste_tonnes,
+            'processed': processed_mass,
+            'stockpiled': sp_mass,
+            'grade': (processed_metal / processed_mass) if processed_mass > 0 else 0,
+            
+            'mining_cost_per_t': mining_cost_per_t,
+            'revenue': revenue,
+            'mining_cost': mining_exp,
+            'processing_cost': proc_exp,
+            'total_cost': total_cost,
+            'net_cash_flow': net_cash_flow,
+            'cumulative': cumulative_cashflow,
+            'stockpile_value': stockpile_val,
+            'stockpile_grade': sp_grade_final
+        })
+
+    return render(request, 'dashboard/cash_flow.html', {
+        'scenario': scenario,
+        'table_data': table_data,
+        'cumulative_cashflow': cumulative_cashflow,
+        'scenarios': ScheduleScenario.objects.all().order_by('-created_at'),
+        'auto_form': AutoIncrementCostForm()
+    })
 
 def auto_update_phase_targets():
     """
@@ -1791,235 +1899,6 @@ def pit_config_view(request):
     
     return render(request, 'dashboard/pit_config.html', {'pits': pits})
 
-# dashboard/views.py
-
-def cash_flow_view(request, pk):
-    """
-    PROJECT LM FINANCIAL ENGINE
-    
-    Rules Implemented:
-    1. INPUTS: Ore Tonnages, Grades, Recovery, Gold Price, Variable Mining Cost.
-    2. LOGIC: 
-       - Plant Demand = 23,400t / period.
-       - Priority: High Grade -> Medium -> Low -> Stockpile.
-       - Revenue = Tonnage * Grade * Recovery * Price.
-       - Mining Cost = (Ore + Waste) * MiningCost (Sunk Cost Rule).
-       - Processing Cost = Processed * $36/t (Fixed).
-    3. FLEXIBILITY:
-       - Uses the uploaded Schedule (MaterialSchedule) as the input source.
-       - Calculates Stockpile balances dynamically per period.
-    """
-    scenario = get_object_or_404(ScheduleScenario, pk=pk)
-    settings, _ = FinancialSettings.objects.get_or_create(scenario=scenario)
-    
-    # Initialize IRR Form
-    irr_form = IRRCalculationForm(request.POST if request.method == "POST" and request.POST.get('action') == 'calculate_irr' else None)
-    irr_result = None
-
-    # --- 1. HANDLE SETTINGS UPDATES ---
-    if request.method == "POST" and request.POST.get('action') == 'update_settings':
-        try:
-            settings.gold_price = float(request.POST.get('gold_price', 0))
-            # Plant Capacity is fixed at 23,400 per Project LM rules, but we allow override if needed
-            input_cap = float(request.POST.get('plant_capacity', 0))
-            settings.plant_capacity = input_cap if input_cap > 0 else 23400.0
-            
-            settings.base_mining_cost = float(request.POST.get('mining_cost', 0))
-            # Processing cost fixed at 36, but adjustable via settings if rules change
-            settings.processing_cost = float(request.POST.get('processing_cost', 36.0))
-            
-            settings.save()
-            messages.success(request, "Financial parameters updated.")
-        except ValueError:
-            messages.error(request, "Invalid input.")
-        return redirect('cash_flow', pk=pk)
-
-    # --- 2. DEFINE CONSTANTS (PROJECT LM RULES) ---
-    PLANT_CAPACITY = settings.plant_capacity if settings.plant_capacity > 0 else 23400.0
-    PROC_COST_PER_T = settings.processing_cost # Default 36.0
-    RECOVERY = settings.recovery_rate # Default 0.90
-    PRICE = settings.gold_price # Default 80.0
-    MINING_COST_BASE = settings.base_mining_cost # Variable per period if in CSV, else uses this base
-
-    # --- 3. RUN SIMULATION LOOP ---
-    periods = MaterialSchedule.objects.filter(scenario=scenario).values_list('period', flat=True).distinct().order_by('period')
-    
-    table_data = []
-    cumulative_cashflow = 0
-    
-    # Stockpile State (Carried over between periods)
-    stockpile_state = {'mass': 0.0, 'metal': 0.0}
-    
-    for p in periods:
-        rows = MaterialSchedule.objects.filter(scenario=scenario, period=p)
-        
-        # A. Aggregate Input Data for this Period
-        period_inputs = {
-            'waste_t': 0.0,
-            'high_t': 0.0, 'high_g': 0.0, 'high_metal': 0.0,
-            'med_t': 0.0, 'med_g': 0.0, 'med_metal': 0.0,
-            'low_t': 0.0, 'low_g': 0.0, 'low_metal': 0.0,
-            # If CSV has 'Mining Cost' column, we could fetch it here. For now, use Settings base.
-            'mining_cost': MINING_COST_BASE 
-        }
-        
-        # Helper to categorize ore based on grade (Project LM Logic)
-        # High > 3.5, Med 1.5-3.5, Low < 1.5 (Adjust thresholds as needed)
-        for row in rows:
-            mass = row.mass or 0.0
-            grade = row.grade or 0.0
-            name = row.material_type.lower()
-            
-            if 'waste' in name:
-                period_inputs['waste_t'] += mass
-            else:
-                # It's Ore - Categorize by Grade
-                metal = mass * grade
-                if grade >= 3.5:
-                    period_inputs['high_t'] += mass
-                    period_inputs['high_metal'] += metal
-                elif grade >= 1.5:
-                    period_inputs['med_t'] += mass
-                    period_inputs['med_metal'] += metal
-                else:
-                    period_inputs['low_t'] += mass
-                    period_inputs['low_metal'] += metal
-
-        # Calculate Average Grades for the batches
-        period_inputs['high_g'] = (period_inputs['high_metal'] / period_inputs['high_t']) if period_inputs['high_t'] > 0 else 0
-        period_inputs['med_g'] = (period_inputs['med_metal'] / period_inputs['med_t']) if period_inputs['med_t'] > 0 else 0
-        period_inputs['low_g'] = (period_inputs['low_metal'] / period_inputs['low_t']) if period_inputs['low_t'] > 0 else 0
-
-        # B. Priority Sorting Logic (High -> Med -> Low -> Stockpile)
-        batches = [
-            {'type': 'High', 'mass': period_inputs['high_t'], 'grade': period_inputs['high_g']},
-            {'type': 'Medium', 'mass': period_inputs['med_t'], 'grade': period_inputs['med_g']},
-            {'type': 'Low', 'mass': period_inputs['low_t'], 'grade': period_inputs['low_g']},
-        ]
-        
-        # Add existing stockpile as a candidate batch
-        if stockpile_state['mass'] > 0:
-            stock_grade = stockpile_state['metal'] / stockpile_state['mass']
-            batches.append({'type': 'Stockpile', 'mass': stockpile_state['mass'], 'grade': stock_grade})
-            
-        # SORT: Highest Grade First
-        batches.sort(key=lambda x: x['grade'], reverse=True)
-        
-        # C. Fill the Plant
-        remaining_cap = PLANT_CAPACITY
-        processed_mass = 0.0
-        processed_metal = 0.0
-        
-        # Reset Stockpile for next state (we rebuild it with leftovers)
-        new_stock_mass = 0.0
-        new_stock_metal = 0.0
-        
-        for batch in batches:
-            b_mass = batch['mass']
-            b_grade = batch['grade']
-            
-            if b_mass <= 0: continue
-            
-            if remaining_cap > 0:
-                to_process = min(b_mass, remaining_cap)
-                
-                processed_mass += to_process
-                processed_metal += (to_process * b_grade)
-                remaining_cap -= to_process
-                
-                # Remainder goes to NEW stockpile
-                remainder = b_mass - to_process
-                if remainder > 0:
-                    new_stock_mass += remainder
-                    new_stock_metal += (remainder * b_grade)
-            else:
-                # Plant full, batch goes to stockpile
-                new_stock_mass += b_mass
-                new_stock_metal += (b_mass * b_grade)
-
-        # Update Stockpile State for next loop
-        stockpile_state = {'mass': new_stock_mass, 'metal': new_stock_metal}
-        
-        # D. Financial Calculations
-        
-        # 1. Revenue
-        gold_produced_g = processed_metal * RECOVERY
-        revenue = gold_produced_g * PRICE
-        
-        # 2. Mining Cost (Sunk Cost on ALL mined material + Waste)
-        # Note: We do NOT charge mining cost on the "Old Stockpile" portion, only Fresh Mined.
-        fresh_ore_mined = period_inputs['high_t'] + period_inputs['med_t'] + period_inputs['low_t']
-        total_moved = fresh_ore_mined + period_inputs['waste_t']
-        mining_cost = total_moved * period_inputs['mining_cost']
-        
-        # 3. Processing Cost (On Processed only)
-        processing_cost = processed_mass * PROC_COST_PER_T
-        
-        total_cost = mining_cost + processing_cost
-        net_cash_flow = revenue - total_cost
-        cumulative_cashflow += net_cash_flow
-        
-        # 4. Stockpile Valuation
-        stock_grade_final = (new_stock_metal / new_stock_mass) if new_stock_mass > 0 else 0
-        stockpile_value = (new_stock_metal * RECOVERY) * PRICE
-
-        # E. Pack Data for Template
-        table_data.append({
-            'period': p,
-            'ore_mined': fresh_ore_mined,
-            'waste': period_inputs['waste_t'],
-            'processed': processed_mass,
-            'stockpiled': new_stock_mass,
-            'grade': (processed_metal / processed_mass) if processed_mass > 0 else 0,
-            'revenue': revenue,
-            'mining_cost': mining_cost,
-            'processing_cost': processing_cost,
-            'total_cost': total_cost,
-            'net_cash_flow': net_cash_flow,
-            'stockpile_value': stockpile_value,
-            'stockpile_grade': stock_grade_final # Added for visibility
-        })
-
-    # --- 4. IRR CALCULATION (Keep existing logic) ---
-    total_processed_cf = sum(item['net_cash_flow'] for item in table_data)
-    total_stockpile_val = sum(item['stockpile_value'] for item in table_data)
-
-    if request.method == "POST" and request.POST.get('action') == 'calculate_irr':
-        if irr_form.is_valid():
-            initial_inv = irr_form.cleaned_data['initial_investment']
-            user_n = irr_form.cleaned_data['periods']
-            include_stock = irr_form.cleaned_data['include_stockpile']
-
-            final_cash_flow = total_processed_cf
-            if include_stock:
-                final_cash_flow += total_stockpile_val
-
-            n = user_n if user_n else len(periods)
-
-            try:
-                if final_cash_flow > 0:
-                    irr_decimal = (final_cash_flow / initial_inv) ** (1/n) - 1
-                else:
-                    irr_decimal = -1.0 
-
-                irr_result = {
-                    'irr': round(irr_decimal * 100, 2),
-                    'total_return': final_cash_flow,
-                    'initial': initial_inv,
-                    'n': n,
-                    'is_stockpile_included': include_stock
-                }
-            except ZeroDivisionError:
-                irr_result = {'error': "Periods cannot be zero."}
-
-    return render(request, 'dashboard/cash_flow.html', {
-        'scenario': scenario,
-        'settings': settings,
-        'table_data': table_data,
-        'cumulative_cashflow': cumulative_cashflow,
-        'irr_form': irr_form,
-        'irr_result': irr_result
-    })
 
 def settings_view(request):
     """

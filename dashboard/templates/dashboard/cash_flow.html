@@ -5,158 +5,83 @@
 
 {% block content %}
 <div class="container-fluid mt-4">
-
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h1 class="h3 mb-0 text-dark font-weight-bold">
-                <i class="fas fa-coins text-warning me-2"></i>Cash Flow Analysis
-            </h1>
-            <div class="text-muted">Scenario: {{ scenario.name }}</div>
-        </div>
-        <div class="d-flex gap-2">
-            <a href="{% url 'schedule_dashboard' %}" class="btn btn-secondary shadow-sm">
-                <i class="fas fa-arrow-left me-2"></i> Back to Schedule
-            </a>
-        </div>
-    </div>
-
-    <div class="card shadow mb-4 border-0">
-        <div class="card-header bg-white py-3 border-bottom-primary">
-            <h6 class="m-0 font-weight-bold text-primary">Financial Parameters</h6>
-        </div>
-        <div class="card-body bg-light">
-            <form method="post" class="row g-3 align-items-end">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="update_settings"> 
-                
-                <div class="col-md-3">
-                    <label class="form-label fw-bold text-dark">Gold Price ($/g)</label>
-                    <div class="input-group">
-                        <span class="input-group-text bg-white">$</span>
-                        <input type="number" step="0.01" name="gold_price" class="form-control fw-bold" value="{{ settings.gold_price }}">
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label fw-bold text-dark">Plant Capacity (t/m)</label>
-                    <input type="number" step="1" name="plant_capacity" class="form-control" value="{{ settings.plant_capacity|floatformat:0 }}">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label fw-bold text-dark">Mining Cost ($/t)</label>
-                    <input type="number" step="0.01" name="mining_cost" class="form-control" value="{{ settings.base_mining_cost }}">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label fw-bold text-dark">Process Cost ($/t)</label>
-                    <input type="number" step="0.01" name="processing_cost" class="form-control" value="{{ settings.processing_cost }}">
-                </div>
-                <div class="col-md-2">
-                    <button type="submit" class="btn btn-primary w-100 fw-bold shadow-sm">
-                        <i class="fas fa-calculator me-2"></i> Recalculate
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div class="card shadow mb-4 border-left-success">
-        <div class="card-header bg-white py-3">
-            <h6 class="m-0 font-weight-bold text-success"><i class="fas fa-chart-line me-2"></i>IRR / Investment Return Calculator</h6>
-        </div>
-        <div class="card-body">
-            <form method="post" class="row g-3 align-items-end">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="calculate_irr">
-                
-                <div class="col-md-3">
-                    <label class="form-label fw-bold text-dark">Initial Investment ($)</label>
-                    {{ irr_form.initial_investment }}
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label fw-bold text-dark">Periods (n)</label>
-                    {{ irr_form.periods }}
-                </div>
-                <div class="col-md-3">
-                    <div class="form-check mb-2">
-                        {{ irr_form.include_stockpile }}
-                        <label class="form-check-label text-dark">Include Stockpile Value?</label>
-                    </div>
-                    <button type="submit" class="btn btn-success w-100 shadow-sm">
-                        <i class="fas fa-percentage me-2"></i> Calculate Return
-                    </button>
-                </div>
-                
-                {% if irr_result %}
-                <div class="col-md-3 text-center border-start">
-                    <h6 class="text-uppercase text-secondary small font-weight-bold">Estimated Return</h6>
-                    <h2 class="mb-0 font-weight-bold {% if irr_result.irr > 0 %}text-success{% else %}text-danger{% endif %}">
-                        {{ irr_result.irr }}%
-                    </h2>
-                    <small class="text-muted d-block">Total Return: ${{ irr_result.total_return|floatformat:0|intcomma }}</small>
-                    {% if irr_result.is_stockpile_included %}
-                    <span class="badge bg-warning text-dark mt-1">Stockpile Included</span>
-                    {% endif %}
-                </div>
-                {% endif %}
-            </form>
-        </div>
+        <h1 class="h3 mb-0 text-dark">Cash Flow: <strong>{{ scenario.name }}</strong></h1>
+        <a href="{% url 'upload_schedule' %}" class="btn btn-secondary shadow-sm">
+            <i class="fas fa-upload me-2"></i> New Upload
+        </a>
     </div>
 
     <div class="card shadow mb-4 border-0">
         <div class="card-header bg-dark text-white d-flex justify-content-between">
-            <h6 class="m-0 font-weight-bold">Revenue vs Expenditure</h6>
-            <span class="badge bg-success">Cumulative Cash Flow: ${{ cumulative_cashflow|floatformat:0|intcomma }}</span>
+            <h6 class="m-0 font-weight-bold">Financial Model</h6>
+            <span class="badge bg-success">Cumulative: ${{ cumulative_cashflow|floatformat:0|intcomma }}</span>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-striped table-hover mb-0 align-middle">
+                <table class="table table-striped table-hover mb-0 align-middle text-center table-sm">
                     <thead class="bg-secondary text-white small text-uppercase">
                         <tr>
-                            <th rowspan="2" class="text-center">Period</th>
-                            <th colspan="3" class="text-center border-end">Material Movement (t)</th>
-                            <th colspan="2" class="text-center border-end">Destination</th>
-                            <th rowspan="2" class="text-center border-end">Grade<br>(g/t)</th>
-                            <th colspan="4" class="text-center">Financials ($ USD)</th>
+                            <th rowspan="2" class="align-middle">Pd</th>
+                            <th colspan="3" class="border-end">Movement (t)</th>
+                            <th rowspan="2" class="align-middle bg-primary bg-opacity-25" style="width: 120px;">Mining Cost<br>($/t)</th>
+                            <th colspan="2" class="border-end">Processing</th>
+                            <th colspan="3">Financials ($)</th>
+                            <th rowspan="2" class="align-middle bg-warning text-dark border-start">Stockpile<br>Balance (t)</th>
                         </tr>
                         <tr>
-                            <th class="text-end text-dark">Ore</th>
-                            <th class="text-end text-dark">Waste</th>
-                            <th class="text-end border-end text-dark">Total</th>
+                            <th class="text-end bg-light text-dark">Ore</th>
+                            <th class="text-end bg-light text-dark">Waste</th>
+                            <th class="text-end border-end fw-bold bg-light text-dark">Total</th>
 
-                            <th class="text-center text-success">Milled</th>
-                            <th class="text-center border-end text-warning">Stockpile</th>
+                            <th class="text-success fw-bold">Milled</th>
+                            <th>Grade</th>
                             
                             <th class="text-end text-success">Revenue</th>
-                            <th class="text-end text-danger">Total Cost</th>
-                            <th class="text-end fw-bold">Net Cash Flow</th>
-                            <th class="text-end bg-warning text-dark border-start">Stockpile Value</th>
+                            <th class="text-end text-danger">Cost</th>
+                            <th class="text-end fw-bold">Net CF</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in table_data %}
                         <tr>
-                            <td class="text-center fw-bold">{{ row.period }}</td>
+                            <td class="fw-bold">{{ row.period }}</td>
                             
                             <td class="text-end">{{ row.ore_mined|floatformat:0|intcomma }}</td>
                             <td class="text-end text-muted">{{ row.waste|floatformat:0|intcomma }}</td>
                             <td class="text-end border-end fw-bold">{{ row.ore_mined|add:row.waste|floatformat:0|intcomma }}</td>
                             
-                            <td class="text-center text-success fw-bold">{{ row.processed|floatformat:0|intcomma }}</td>
-                            <td class="text-center border-end text-warning fw-bold">{{ row.stockpiled|floatformat:0|intcomma }}</td>
+                            <td class="p-1 bg-primary bg-opacity-10">
+                                <form method="post" class="d-flex justify-content-center">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="period_id" value="{{ row.period }}">
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" step="0.01" name="mining_cost" 
+                                               class="form-control form-control-sm text-center px-1 fw-bold" 
+                                               value="{{ row.mining_cost_per_t }}">
+                                        <button type="submit" name="update_single_cost" class="btn btn-primary btn-sm px-1">
+                                            <i class="fas fa-check"></i>
+                                        </button>
+                                    </div>
+                                </form>
+                            </td>
+
+                            <td class="text-success fw-bold">{{ row.processed|floatformat:0|intcomma }}</td>
+                            <td>{{ row.grade|floatformat:2 }}</td>
                             
-                            <td class="text-center border-end">{{ row.grade|floatformat:2 }}</td>
-                            
-                            <td class="text-end text-success">+${{ row.revenue|floatformat:0|intcomma }}</td>
-                            <td class="text-end text-danger">-${{ row.total_cost|floatformat:0|intcomma }}</td>
-                            
+                            <td class="text-end text-success">+{{ row.revenue|floatformat:0|intcomma }}</td>
+                            <td class="text-end text-danger">-{{ row.total_cost|floatformat:0|intcomma }}</td>
                             <td class="text-end fw-bold {% if row.net_cash_flow < 0 %}text-danger{% else %}text-success{% endif %}">
-                                ${{ row.net_cash_flow|floatformat:0|intcomma }}
+                                {{ row.net_cash_flow|floatformat:0|intcomma }}
                             </td>
                             
                             <td class="text-end fw-bold text-dark bg-warning bg-opacity-10 border-start">
-                                ${{ row.stockpile_value|floatformat:0|intcomma }}
+                                {{ row.stockpiled|floatformat:0|intcomma }} t
+                                <div class="small text-muted" style="font-size: 0.85em;">
+                                    @ {{ row.stockpile_grade|floatformat:2 }} g/t
+                                </div>
                             </td>
                         </tr>
-                        {% empty %}
-                        <tr><td colspan="11" class="text-center py-4">No data found. Upload a schedule first.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
