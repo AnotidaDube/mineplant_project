@@ -287,3 +287,23 @@ class AutoIncrementCostForm(forms.Form):
         initial=0.10,
         widget=forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'})
     )
+
+class NPVForm(forms.Form):
+    """
+    On-the-fly Calculator for Investment Analysis.
+    Does not save to DB, just processes the math in the view.
+    """
+    initial_investment = forms.FloatField(
+        label="Initial Capital ($)", 
+        initial=5000000.0,
+        min_value=0,
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'e.g. 5000000'})
+    )
+    discount_rate = forms.FloatField(
+        label="Discount Rate (%)", 
+        initial=8.0,
+        min_value=0,
+        help_text="Rate per period (e.g. 8% per year)",
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'step': '0.1', 'placeholder': 'e.g. 8.5'})
+    )
+

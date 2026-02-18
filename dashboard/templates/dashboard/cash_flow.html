@@ -1,21 +1,90 @@
 {% extends 'dashboard/base.html' %}
 {% load humanize %}
 
-{% block title %}💰 Cash Flow{% endblock %}
+{% block title %}💰 Cash Flow Analysis{% endblock %}
 
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h3 mb-0 text-dark">Cash Flow: <strong>{{ scenario.name }}</strong></h1>
-        <a href="{% url 'upload_schedule' %}" class="btn btn-secondary shadow-sm">
-            <i class="fas fa-upload me-2"></i> New Upload
-        </a>
+        <div>
+            <h1 class="h3 mb-0 text-dark">Cash Flow: <strong>{{ scenario.name }}</strong></h1>
+            <p class="text-muted mb-0 small">Financial modeling with variable cost & stockpile optimization.</p>
+        </div>
+        
+        <div class="d-flex gap-2">
+            <div class="dropdown">
+                <button class="btn btn-outline-secondary dropdown-toggle shadow-sm" type="button" data-bs-toggle="dropdown">
+                    <i class="fas fa-history me-1"></i> History
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow">
+                    <li><h6 class="dropdown-header">Select Scenario</h6></li>
+                    {% for s in scenarios %}
+                    <li><a class="dropdown-item" href="{% url 'cash_flow_view' s.id %}">{{ s.name }}</a></li>
+                    {% endfor %}
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="{% url 'upload_schedule' %}">Upload New</a></li>
+                </ul>
+            </div>
+            <a href="{% url 'upload_schedule' %}" class="btn btn-primary shadow-sm">
+                <i class="fas fa-upload me-2"></i> New Upload
+            </a>
+        </div>
+    </div>
+
+    <div class="card shadow mb-4 border-left-info">
+        <div class="card-header bg-white py-3">
+            <h6 class="m-0 font-weight-bold text-info">
+                <i class="fas fa-chart-line me-2"></i>Investment Analysis (NPV Calculator)
+            </h6>
+        </div>
+        <div class="card-body">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <form method="post" class="row g-3 align-items-end">
+                        {% csrf_token %}
+                        <div class="col-md-4">
+                            <label class="form-label small font-weight-bold text-muted">{{ npv_form.initial_investment.label }}</label>
+                            {{ npv_form.initial_investment }}
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small font-weight-bold text-muted">{{ npv_form.discount_rate.label }}</label>
+                            {{ npv_form.discount_rate }}
+                        </div>
+                        <div class="col-md-3">
+                            <button type="submit" name="calculate_npv" class="btn btn-info w-100 font-weight-bold text-white shadow-sm">
+                                Calculate
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="col-md-4 text-center border-start">
+                    {% if npv_result is not None %}
+                        <h6 class="text-uppercase text-muted small font-weight-bold mb-1">Net Present Value</h6>
+                        <h2 class="mb-0 font-weight-bold {% if npv_result > 0 %}text-success{% else %}text-danger{% endif %}">
+                            ${{ npv_result|floatformat:0|intcomma }}
+                        </h2>
+                        <small class="{% if npv_result > 0 %}text-success{% else %}text-danger{% endif %}">
+                            {% if npv_result > 0 %}
+                                <i class="fas fa-check-circle me-1"></i> Project Viable
+                            {% else %}
+                                <i class="fas fa-times-circle me-1"></i> Project Not Viable
+                            {% endif %}
+                        </small>
+                    {% else %}
+                        <div class="text-muted small py-2">
+                            Enter parameters to calculate NPV.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="card shadow mb-4 border-0">
-        <div class="card-header bg-dark text-white d-flex justify-content-between">
-            <h6 class="m-0 font-weight-bold">Financial Model</h6>
-            <span class="badge bg-success">Cumulative: ${{ cumulative_cashflow|floatformat:0|intcomma }}</span>
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+            <h6 class="m-0 font-weight-bold">Operational Cash Flow</h6>
+            <span class="badge bg-success fs-6">Cumulative CF: ${{ cumulative_cashflow|floatformat:0|intcomma }}</span>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
@@ -24,10 +93,10 @@
                         <tr>
                             <th rowspan="2" class="align-middle">Pd</th>
                             <th colspan="3" class="border-end">Movement (t)</th>
-                            <th rowspan="2" class="align-middle bg-primary bg-opacity-25" style="width: 120px;">Mining Cost<br>($/t)</th>
+                            <th rowspan="2" class="align-middle bg-primary bg-opacity-25" style="width: 110px;">Cost ($/t)</th>
                             <th colspan="2" class="border-end">Processing</th>
                             <th colspan="3">Financials ($)</th>
-                            <th rowspan="2" class="align-middle bg-warning text-dark border-start">Stockpile<br>Balance (t)</th>
+                            <th rowspan="2" class="align-middle bg-warning text-dark border-start">Stockpile (t)</th>
                         </tr>
                         <tr>
                             <th class="text-end bg-light text-dark">Ore</th>
@@ -55,7 +124,7 @@
                                 <form method="post" class="d-flex justify-content-center">
                                     {% csrf_token %}
                                     <input type="hidden" name="period_id" value="{{ row.period }}">
-                                    <div class="input-group input-group-sm">
+                                    <div class="input-group input-group-sm" style="max-width: 90px;">
                                         <input type="number" step="0.01" name="mining_cost" 
                                                class="form-control form-control-sm text-center px-1 fw-bold" 
                                                value="{{ row.mining_cost_per_t }}">
@@ -69,17 +138,15 @@
                             <td class="text-success fw-bold">{{ row.processed|floatformat:0|intcomma }}</td>
                             <td>{{ row.grade|floatformat:2 }}</td>
                             
-                            <td class="text-end text-success">+{{ row.revenue|floatformat:0|intcomma }}</td>
-                            <td class="text-end text-danger">-{{ row.total_cost|floatformat:0|intcomma }}</td>
+                            <td class="text-end text-success small">+{{ row.revenue|floatformat:0|intcomma }}</td>
+                            <td class="text-end text-danger small">-{{ row.total_cost|floatformat:0|intcomma }}</td>
                             <td class="text-end fw-bold {% if row.net_cash_flow < 0 %}text-danger{% else %}text-success{% endif %}">
                                 {{ row.net_cash_flow|floatformat:0|intcomma }}
                             </td>
                             
                             <td class="text-end fw-bold text-dark bg-warning bg-opacity-10 border-start">
-                                {{ row.stockpiled|floatformat:0|intcomma }} t
-                                <div class="small text-muted" style="font-size: 0.85em;">
-                                    @ {{ row.stockpile_grade|floatformat:2 }} g/t
-                                </div>
+                                {{ row.stockpiled|floatformat:0|intcomma }}
+                                <div class="small text-muted" style="font-size: 0.75em;">@ {{ row.stockpile_grade|floatformat:2 }} g/t</div>
                             </td>
                         </tr>
                         {% endfor %}

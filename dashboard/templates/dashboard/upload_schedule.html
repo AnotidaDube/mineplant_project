@@ -1,30 +1,34 @@
 {% extends 'dashboard/base.html' %}
+{% load humanize %}
+
+{% block title %}Manage Mine Schedules{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
 
     <div class="d-sm-flex align-items-center justify-content-between mb-4">
-        <h1 class="h3 mb-0 text-gray-800">Upload Mine Schedule</h1>
+        <h1 class="h3 mb-0 text-gray-800">Manage Mine Schedules</h1>
     </div>
 
     <div class="row justify-content-center">
-        <div class="col-lg-8"> 
+        <div class="col-lg-10"> 
             
-            <div class="card shadow mb-4">
-                <div class="card-header py-3 bg-primary text-white">
-                    <h6 class="m-0 font-weight-bold">Upload New Schedule</h6>
+            <div class="card shadow mb-5 border-bottom-primary">
+                <div class="card-header py-3 bg-primary d-flex flex-row align-items-center justify-content-between">
+                    <h6 class="m-0 font-weight-bold text-white">
+                        <i class="fas fa-file-upload mr-2"></i> Upload New Schedule
+                    </h6>
                 </div>
                 <div class="card-body">
-                    <div class="alert alert-info border-left-primary">
-                        <div class="d-flex align-items-center">
-                            <i class="fas fa-info-circle fa-2x mr-3"></i>
+                    <div class="alert alert-info border-left-info shadow-sm mb-4">
+                        <div class="d-flex align-items-start">
+                            <i class="fas fa-info-circle fa-lg mr-3 mt-1"></i>
                             <div>
-                                <strong>Instructions (Use the 'Production Upload' Report):</strong>
+                                <strong>Supported Format (CSV):</strong>
                                 <ul class="mb-0 pl-3 mt-1 small">
-                                    <li>Export your schedule as a CSV.</li>
-                                    <li><strong>Required Headers:</strong> Period, Start, End, Source, Material, Volume, Mass, Length.</li>
-                                    <li><strong>Grade Column:</strong> The system accepts <strong>'avarage'</strong> (from MineSched) or 'Grade'.</li>
-                                    <li><strong>Date Format:</strong> Must be <strong>dd/mm/yyyy</strong> (e.g., 01/01/2026).</li>
+                                    <li>Columns needed: <code>Period</code>, <code>Waste</code>, <code>Low Grade</code>, <code>Medium Grade</code>, <code>High Grade</code>.</li>
+                                    <li>System accepts variations like "avarage" (typo) or "grade".</li>
+                                    <li>Date Format: <strong>dd/mm/yyyy</strong> (e.g., 01/01/2026) or simple Period numbers (1, 2, 3).</li>
                                 </ul>
                             </div>
                         </div>
@@ -32,90 +36,86 @@
 
                     <form method="post" enctype="multipart/form-data" action="{% url 'upload_schedule' %}">
                         {% csrf_token %}
-                        
                         <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="{{ form.scenario_name.id_for_label }}" class="form-label font-weight-bold text-gray-800">
-                                    {{ form.scenario_name.label }}
-                                </label>
+                            <div class="col-md-5 mb-3">
+                                <label class="font-weight-bold text-gray-700">Scenario Name</label>
                                 {{ form.scenario_name }}
-                                {% if form.scenario_name.errors %}
-                                    <div class="text-danger small mt-1">{{ form.scenario_name.errors }}</div>
-                                {% endif %}
                             </div>
-
-                            <div class="col-md-6 mb-4">
-                                <label for="{{ form.csv_file.id_for_label }}" class="form-label font-weight-bold text-gray-800">
-                                    {{ form.csv_file.label }}
-                                </label>
-                                {{ form.csv_file }}
-                                {% if form.csv_file.errors %}
-                                    <div class="text-danger small mt-1">{{ form.csv_file.errors }}</div>
-                                {% endif %}
+                            <div class="col-md-5 mb-3">
+                                <label class="font-weight-bold text-gray-700">Select CSV File</label>
+                                <div class="custom-file">
+                                    {{ form.csv_file }}
+                                    <label class="custom-file-label" for="customFile">Choose file</label>
+                                </div>
+                            </div>
+                            <div class="col-md-2 mb-3 d-flex align-items-end">
+                                <button type="submit" class="btn btn-primary btn-block shadow-sm font-weight-bold">
+                                    Upload
+                                </button>
                             </div>
                         </div>
-
-                        <hr>
-
-                        <button type="submit" class="btn btn-primary btn-block btn-lg shadow-sm">
-                            <i class="fas fa-upload fa-sm text-white-50 mr-2"></i> Upload Schedule
-                        </button>
                     </form>
                 </div>
             </div>
 
             <div class="card shadow mb-4">
-                <div class="card-header py-3 bg-secondary text-white">
-                    <h6 class="m-0 font-weight-bold">Available Schedules (History)</h6>
+                <div class="card-header py-3 bg-white d-flex flex-row align-items-center justify-content-between">
+                    <h6 class="m-0 font-weight-bold text-primary">
+                        <i class="fas fa-history mr-2"></i> Available Schedules
+                    </h6>
                 </div>
-                <div class="card-body">
-                    <p class="small text-muted mb-3">
-                        The green highlighted row is your <strong>Active Plan</strong>. The system compares actual production against this plan.
-                    </p>
+                <div class="card-body p-0">
                     <div class="table-responsive">
-                        <table class="table table-bordered table-hover" width="100%" cellspacing="0">
-                            <thead class="thead-light">
+                        <table class="table table-striped table-hover mb-0 align-middle">
+                            <thead class="bg-light text-uppercase small font-weight-bold text-muted">
                                 <tr>
-                                    <th>Scenario Name</th>
+                                    <th class="pl-4">Scenario Name</th>
                                     <th>Uploaded Date</th>
-                                    <th>Status / Action</th>
+                                    <th class="text-center">Status</th>
+                                    <th class="text-right pr-4">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for s in scenarios %}
-                                <tr class="{% if s.is_active %}table-success{% endif %}">
+                                <tr class="{% if s.is_active %}bg-success-light{% endif %}">
                                     
-                                    <td class="align-middle text-dark">
-                                        <strong>{{ s.name }}</strong>
+                                    <td class="pl-4 align-middle">
+                                        <div class="font-weight-bold text-dark">{{ s.name }}</div>
+                                        <small class="text-muted">ID: {{ s.id }}</small>
+                                    </td>
+                                    
+                                    <td class="align-middle text-muted small">
+                                        <i class="far fa-calendar-alt mr-1"></i> {{ s.created_at|date:"d M Y, H:i" }}
+                                    </td>
+                                    
+                                    <td class="align-middle text-center">
                                         {% if s.is_active %}
-                                            <span class="badge badge-success ml-2 shadow-sm">CURRENTLY ACTIVE</span>
+                                            <span class="badge badge-success px-2 py-1 shadow-sm"
+                                                style="font-size: 0.85em; background-color: #28a745; color: white;">
+                                                <i class="fas fa-check-circle mr-1"></i> ACTIVE PLAN
+                                            </span>
+                                        {% else %}
+                                            <span class="badge badge-black text-muted px-2 py-1 border" style="opacity: 0.7;">
+                                                <i class="fas fa-archive mr-1"></i> Archived
                                         {% endif %}
                                     </td>
                                     
-                                    <td class="align-middle">{{ s.created_at|date:"d M Y, H:i" }}</td>
-                                    
-                                    <td class="align-middle">
+                                    <td class="align-middle text-right pr-4">
                                         
-                                        <a href="{% url 'cash_flow' s.id %}" class="btn btn-info btn-sm shadow-sm mr-1" title="Analyze Cash Flow">
-                                            <i class="fas fa-dollar-sign"></i> Financials
+                                        <a href="{% url 'cash_flow_view' s.id %}" class="btn btn-info btn-sm shadow-sm mr-1">
+                                            <i class="fas fa-chart-line mr-1"></i> Financials
                                         </a>
 
-                                        {% if s.is_active %}
-                                            <button class="btn btn-success btn-sm font-weight-bold shadow-sm" disabled style="opacity: 1; cursor: default;">
-                                                <i class="fas fa-check-circle mr-1"></i> Active
-                                            </button>
-                                        {% else %}
-                                            <a href="{% url 'sync-targets' s.id %}" class="btn btn-outline-warning btn-sm text-dark font-weight-bold shadow-sm" title="Switch to this plan">
-                                                <i class="fas fa-sync-alt mr-1"></i> Set as Active
-                                            </a>
-                                        {% endif %}
+                                        {% if not s.is_active %}
+                                            {% endif %}
                                     </td>
                                 </tr>
                                 {% empty %}
                                 <tr>
-                                    <td colspan="3" class="text-center text-muted py-4">
-                                        <div class="mb-2"><i class="fas fa-folder-open fa-3x text-gray-300"></i></div>
-                                        No schedules uploaded yet.
+                                    <td colspan="4" class="text-center text-muted py-5">
+                                        <div class="mb-3"><i class="fas fa-folder-open fa-3x text-gray-300"></i></div>
+                                        <h5>No schedules found</h5>
+                                        <p class="small">Upload a CSV file above to get started.</p>
                                     </td>
                                 </tr>
                                 {% endfor %}
@@ -129,4 +129,22 @@
     </div>
 
 </div>
+
+<style>
+    .bg-success-light {
+        background-color: #f0fdf4 !important; /* Very light green */
+    }
+    .custom-file-label::after {
+        content: "Browse";
+    }
+</style>
+
+<script>
+    document.querySelector('.custom-file-input').addEventListener('change', function(e){
+        var fileName = document.getElementById("id_csv_file").files[0].name;
+        var nextSibling = e.target.nextElementSibling
+        nextSibling.innerText = fileName
+    })
+</script>
+
 {% endblock %}
