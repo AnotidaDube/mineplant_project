@@ -1305,12 +1305,24 @@ def upload_schedule_view(request):
 # ==========================================
 # 2. CASH FLOW ENGINE (Fresh Ore Priority)
 # ==========================================
+def calculate_irr(cash_flows, max_iterations=1000, error_tolerance=0.001):
+    """Calculates Internal Rate of Return (IRR) using the Newton-Raphson method."""
+    rate = 0.10 # Initial guess of 10%
+    for _ in range(max_iterations):
+        npv = sum(cf / ((1 + rate) ** i) for i, cf in enumerate(cash_flows))
+        # Derivative of NPV
+        d_npv = sum(-i * cf / ((1 + rate) ** (i + 1)) for i, cf in enumerate(cash_flows))
+        if d_npv == 0 or abs(npv) < error_tolerance:
+            break
+        rate = rate - (npv / d_npv)
+    return rate * 100 # Return as percentage
+
 def cash_flow_view(request, scenario_id=None):
     """
     Financial Engine:
-    - Auto-Increment Cost ($0.10/period)
-    - Strict Priority: Fresh Ore -> Stockpile
-    - NEW: Net Present Value (NPV) Calculator
+    - Dynamic Variables pulled from FinancialSettings
+    - Auto-Increment Cost & Stockpile Optimization
+    - NPV & IRR Calculator
     """
     # 1. Load Scenario
     if not scenario_id:
@@ -1321,7 +1333,17 @@ def cash_flow_view(request, scenario_id=None):
     if not scenario:
         return render(request, 'dashboard/cash_flow.html', {'error': 'No Scenario found.'})
 
-    # 2. Handle Manual Mining Cost Updates (POST Action 1)
+    # 2. LOAD SETTINGS FROM DATABASE (Fixes the parameter bug)
+    settings_obj = FinancialSettings.objects.filter(scenario=scenario).first()
+    
+    # Use database values, fallback to defaults if no settings exist
+    PLANT_CAPACITY = settings_obj.plant_capacity if settings_obj else 23400.0
+    RECOVERY = settings_obj.recovery_rate if settings_obj else 0.90
+    PRICE = settings_obj.gold_price if settings_obj else 80.0
+    PROCESSING_COST = settings_obj.processing_cost if settings_obj else 36.0
+    BASE_MINING_COST = settings_obj.base_mining_cost if settings_obj else 4.5
+
+    # 3. Handle Manual Mining Cost Updates
     if request.method == "POST" and 'update_single_cost' in request.POST:
         try:
             p_id = int(request.POST.get('period_id'))
@@ -1338,29 +1360,21 @@ def cash_flow_view(request, scenario_id=None):
             messages.error(request, f"Update Failed: {e}")
         return redirect('cash_flow_view', scenario_id=scenario.id)
 
-    # --- 3. SIMULATION CONSTANTS ---
-    PLANT_CAPACITY = 23400.0
-    RECOVERY = 0.90
-    PRICE = 80.0
-    PROCESSING_COST = 36.0
-
     # --- 4. RUN CASH FLOW SIMULATION ---
     schedules = MaterialSchedule.objects.filter(scenario=scenario).order_by('period')
     
     table_data = []
     cumulative_cashflow = 0.0
     
-    sp_mass = 0.0
-    sp_metal = 0.0 
+    cumulative_sp_mass = 0.0
+    cumulative_sp_metal = 0.0 
 
-    # We calculate the table FIRST, because NPV depends on the resulting Net Cash Flows
     for row in schedules:
-        # A. Cost Logic
-        default_cost = 4.5 + ((row.period - 1) * 0.10)
+        # A. Cost Logic (Starts at BASE_MINING_COST)
+        default_cost = BASE_MINING_COST + ((row.period - 1) * 0.10)
         config = PeriodConfiguration.objects.filter(physical_schedule=row).first()
         
         if config:
-            # Respect manual override, unless it matches default exactly (logic simplified for robustness)
             if config.mining_cost_per_tonne == 4.5 and row.period > 1:
                  mining_cost_per_t = default_cost
             else:
@@ -1390,22 +1404,31 @@ def cash_flow_view(request, scenario_id=None):
             b['mass'] -= feed 
 
         # 2. Stockpile Second
-        if remaining_cap > 0 and sp_mass > 0:
-            sp_grade = (sp_metal / sp_mass) if sp_mass > 0 else 0
-            feed = min(sp_mass, remaining_cap)
+        if remaining_cap > 0 and cumulative_sp_mass > 0:
+            sp_grade = (cumulative_sp_metal / cumulative_sp_mass) if cumulative_sp_mass > 0 else 0
+            feed = min(cumulative_sp_mass, remaining_cap)
             processed_mass += feed
             processed_metal += (feed * sp_grade)
             remaining_cap -= feed
-            sp_mass -= feed
-            sp_metal -= (feed * sp_grade)
+            cumulative_sp_mass -= feed
+            cumulative_sp_metal -= (feed * sp_grade)
 
-        # D. Add Leftovers to Stockpile
+        # D. Calculate WHAT WAS LEFT OVER THIS PERIOD
+        period_sp_added_mass = 0.0
+        period_sp_added_metal = 0.0
+        
         for b in fresh_batches:
             if b['mass'] > 0:
-                sp_mass += b['mass']
-                sp_metal += (b['mass'] * b['grade'])
+                period_sp_added_mass += b['mass']
+                period_sp_added_metal += (b['mass'] * b['grade'])
+                
+                # Add to cumulative
+                cumulative_sp_mass += b['mass']
+                cumulative_sp_metal += (b['mass'] * b['grade'])
 
-        sp_grade_final = (sp_metal / sp_mass) if sp_mass > 0 else 0.0
+        # Calculate Grades
+        period_sp_grade = (period_sp_added_metal / period_sp_added_mass) if period_sp_added_mass > 0 else 0.0
+        cumulative_sp_grade = (cumulative_sp_metal / cumulative_sp_mass) if cumulative_sp_mass > 0 else 0.0
 
         # E. Financials
         revenue = processed_metal * RECOVERY * PRICE
@@ -1416,15 +1439,12 @@ def cash_flow_view(request, scenario_id=None):
         total_cost = mining_exp + proc_exp
         net_cash_flow = revenue - total_cost
         cumulative_cashflow += net_cash_flow
-        
-        stockpile_val = (sp_metal * RECOVERY) * PRICE
 
         table_data.append({
             'period': row.period,
             'ore_mined': (row.hg_tonnes + row.mg_tonnes + row.lg_tonnes),
             'waste': row.waste_tonnes,
             'processed': processed_mass,
-            'stockpiled': sp_mass,
             'grade': (processed_metal / processed_mass) if processed_mass > 0 else 0,
             'mining_cost_per_t': mining_cost_per_t,
             'revenue': revenue,
@@ -1433,49 +1453,49 @@ def cash_flow_view(request, scenario_id=None):
             'total_cost': total_cost,
             'net_cash_flow': net_cash_flow,
             'cumulative': cumulative_cashflow,
-            'stockpile_value': stockpile_val,
-            'stockpile_grade': sp_grade_final
+            
+            # Stockpile Tracking
+            'period_sp_mass': period_sp_added_mass,
+            'period_sp_grade': period_sp_grade,
+            'cum_sp_mass': cumulative_sp_mass,
+            'cum_sp_grade': cumulative_sp_grade
         })
 
     # ==========================================
-    # 5. NPV CALCULATOR (POST Action 2)
+    # 5. NPV & IRR CALCULATOR
     # ==========================================
     npv_result = None
+    irr_result = None
     npv_form = NPVForm(request.POST or None)
 
-    # Only run calculation if the specific 'calculate_npv' button was clicked
     if request.method == "POST" and 'calculate_npv' in request.POST:
         if npv_form.is_valid():
             I0 = npv_form.cleaned_data['initial_investment']
             r_percent = npv_form.cleaned_data['discount_rate']
-            r = r_percent / 100.0  # Convert percentage to decimal (e.g., 8% -> 0.08)
+            r = r_percent / 100.0  
 
-            # NPV Formula: -I0 + Sum( CF / (1+r)^t )
+            # 1. Calculate NPV
             discounted_sum = 0.0
-            
             for row in table_data:
                 t = row['period']
                 cf = row['net_cash_flow']
-                
-                # Apply Discount Factor
-                pv = cf / ((1 + r) ** t)
-                discounted_sum += pv
+                discounted_sum += (cf / ((1 + r) ** t))
             
             npv_result = -I0 + discounted_sum
             
-            if npv_result > 0:
-                messages.success(request, f"Project Viable! NPV: ${npv_result:,.2f}")
-            else:
-                messages.warning(request, f"Project Not Viable. NPV: ${npv_result:,.2f}")
+            # 2. Calculate IRR
+            # Array format: [-Initial Investment, CF1, CF2, CF3...]
+            cash_flows_array = [-I0] + [row['net_cash_flow'] for row in table_data]
+            irr_result = calculate_irr(cash_flows_array)
 
-    # Render
     return render(request, 'dashboard/cash_flow.html', {
         'scenario': scenario,
         'table_data': table_data,
         'cumulative_cashflow': cumulative_cashflow,
         'scenarios': ScheduleScenario.objects.all().order_by('-created_at'),
-        'npv_form': npv_form,       # Pass form to template
-        'npv_result': npv_result    # Pass result to template
+        'npv_form': npv_form,       
+        'npv_result': npv_result,
+        'irr_result': irr_result   # Pass IRR to template
     })
 
 def auto_update_phase_targets():

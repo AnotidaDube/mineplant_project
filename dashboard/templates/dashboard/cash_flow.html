@@ -8,7 +8,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h1 class="h3 mb-0 text-dark">Cash Flow: <strong>{{ scenario.name }}</strong></h1>
-            <p class="text-muted mb-0 small">Financial modeling with variable cost & stockpile optimization.</p>
+            <p class="text-muted mb-0 small">Financial modeling linked to your Central Settings.</p>
         </div>
         
         <div class="d-flex gap-2">
@@ -25,8 +25,8 @@
                     <li><a class="dropdown-item" href="{% url 'upload_schedule' %}">Upload New</a></li>
                 </ul>
             </div>
-            <a href="{% url 'upload_schedule' %}" class="btn btn-primary shadow-sm">
-                <i class="fas fa-upload me-2"></i> New Upload
+            <a href="{% url 'settings' %}" class="btn btn-warning shadow-sm">
+                <i class="fas fa-cog me-2"></i> Settings
             </a>
         </div>
     </div>
@@ -34,19 +34,19 @@
     <div class="card shadow mb-4 border-left-info">
         <div class="card-header bg-white py-3">
             <h6 class="m-0 font-weight-bold text-info">
-                <i class="fas fa-chart-line me-2"></i>Investment Analysis (NPV Calculator)
+                <i class="fas fa-chart-line me-2"></i>Investment Analysis (NPV & IRR)
             </h6>
         </div>
         <div class="card-body">
             <div class="row align-items-center">
-                <div class="col-md-8">
+                <div class="col-md-6 border-end">
                     <form method="post" class="row g-3 align-items-end">
                         {% csrf_token %}
-                        <div class="col-md-4">
+                        <div class="col-md-5">
                             <label class="form-label small font-weight-bold text-muted">{{ npv_form.initial_investment.label }}</label>
                             {{ npv_form.initial_investment }}
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <label class="form-label small font-weight-bold text-muted">{{ npv_form.discount_rate.label }}</label>
                             {{ npv_form.discount_rate }}
                         </div>
@@ -58,24 +58,28 @@
                     </form>
                 </div>
 
-                <div class="col-md-4 text-center border-start">
-                    {% if npv_result is not None %}
+                <div class="col-md-6 d-flex justify-content-around">
+                    <div class="text-center">
                         <h6 class="text-uppercase text-muted small font-weight-bold mb-1">Net Present Value</h6>
-                        <h2 class="mb-0 font-weight-bold {% if npv_result > 0 %}text-success{% else %}text-danger{% endif %}">
-                            ${{ npv_result|floatformat:0|intcomma }}
-                        </h2>
-                        <small class="{% if npv_result > 0 %}text-success{% else %}text-danger{% endif %}">
-                            {% if npv_result > 0 %}
-                                <i class="fas fa-check-circle me-1"></i> Project Viable
-                            {% else %}
-                                <i class="fas fa-times-circle me-1"></i> Project Not Viable
-                            {% endif %}
-                        </small>
-                    {% else %}
-                        <div class="text-muted small py-2">
-                            Enter parameters to calculate NPV.
-                        </div>
-                    {% endif %}
+                        {% if npv_result is not None %}
+                            <h3 class="mb-0 font-weight-bold {% if npv_result > 0 %}text-success{% else %}text-danger{% endif %}">
+                                ${{ npv_result|floatformat:0|intcomma }}
+                            </h3>
+                        {% else %}
+                            <div class="text-muted mt-2">-</div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="text-center">
+                        <h6 class="text-uppercase text-muted small font-weight-bold mb-1">IRR (Yield)</h6>
+                        {% if irr_result is not None %}
+                            <h3 class="mb-0 font-weight-bold {% if irr_result > 0 %}text-primary{% else %}text-danger{% endif %}">
+                                {{ irr_result|floatformat:2 }}%
+                            </h3>
+                        {% else %}
+                            <div class="text-muted mt-2">-</div>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
         </div>
@@ -93,10 +97,10 @@
                         <tr>
                             <th rowspan="2" class="align-middle">Pd</th>
                             <th colspan="3" class="border-end">Movement (t)</th>
-                            <th rowspan="2" class="align-middle bg-primary bg-opacity-25" style="width: 110px;">Cost ($/t)</th>
+                            <th rowspan="2" class="align-middle bg-primary bg-opacity-25" style="width: 100px;">Cost ($/t)</th>
                             <th colspan="2" class="border-end">Processing</th>
-                            <th colspan="3">Financials ($)</th>
-                            <th rowspan="2" class="align-middle bg-warning text-dark border-start">Stockpile (t)</th>
+                            <th colspan="3" class="border-end">Financials ($)</th>
+                            <th colspan="2" class="align-middle bg-warning text-dark border-start">Stockpile (t)</th>
                         </tr>
                         <tr>
                             <th class="text-end bg-light text-dark">Ore</th>
@@ -108,7 +112,10 @@
                             
                             <th class="text-end text-success">Revenue</th>
                             <th class="text-end text-danger">Cost</th>
-                            <th class="text-end fw-bold">Net CF</th>
+                            <th class="text-end border-end fw-bold">Net CF</th>
+                            
+                            <th class="text-end bg-light text-dark" title="Ore left over from THIS period only">Left This Period</th>
+                            <th class="text-end bg-light text-dark" title="Total Running Balance">Cum. Balance</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -124,7 +131,7 @@
                                 <form method="post" class="d-flex justify-content-center">
                                     {% csrf_token %}
                                     <input type="hidden" name="period_id" value="{{ row.period }}">
-                                    <div class="input-group input-group-sm" style="max-width: 90px;">
+                                    <div class="input-group input-group-sm" style="max-width: 85px;">
                                         <input type="number" step="0.01" name="mining_cost" 
                                                class="form-control form-control-sm text-center px-1 fw-bold" 
                                                value="{{ row.mining_cost_per_t }}">
@@ -140,13 +147,22 @@
                             
                             <td class="text-end text-success small">+{{ row.revenue|floatformat:0|intcomma }}</td>
                             <td class="text-end text-danger small">-{{ row.total_cost|floatformat:0|intcomma }}</td>
-                            <td class="text-end fw-bold {% if row.net_cash_flow < 0 %}text-danger{% else %}text-success{% endif %}">
+                            <td class="text-end border-end fw-bold {% if row.net_cash_flow < 0 %}text-danger{% else %}text-success{% endif %}">
                                 {{ row.net_cash_flow|floatformat:0|intcomma }}
                             </td>
                             
-                            <td class="text-end fw-bold text-dark bg-warning bg-opacity-10 border-start">
-                                {{ row.stockpiled|floatformat:0|intcomma }}
-                                <div class="small text-muted" style="font-size: 0.75em;">@ {{ row.stockpile_grade|floatformat:2 }} g/t</div>
+                            <td class="text-end fw-bold text-muted bg-warning bg-opacity-10 border-start">
+                                {% if row.period_sp_mass > 0 %}
+                                    {{ row.period_sp_mass|floatformat:0|intcomma }}
+                                    <div class="small" style="font-size: 0.75em;">@ {{ row.period_sp_grade|floatformat:2 }}</div>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            
+                            <td class="text-end fw-bold text-dark bg-warning bg-opacity-25">
+                                {{ row.cum_sp_mass|floatformat:0|intcomma }}
+                                <div class="small text-muted" style="font-size: 0.75em;">@ {{ row.cum_sp_grade|floatformat:2 }}</div>
                             </td>
                         </tr>
                         {% endfor %}
